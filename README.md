@@ -41,24 +41,19 @@ O primeiro acesso (banco vazio) abre a tela de criação do administrador.
 
 ---
 
-## Publicar na internet (Vercel + Neon, plano gratuito)
-
-Você vai precisar de uma conta na **Vercel** (onde o site fica) — o banco de
-dados **Neon** é criado de dentro da própria Vercel.
+## Publicar na internet (Vercel, plano gratuito)
 
 1. Entre em <https://vercel.com> e clique em **Sign Up** → **Continue with GitHub**.
-2. No painel da Vercel clique em **Add New… → Project**, encontre o repositório
-   **Trip** e clique em **Import**.
-3. Não mude nada nas configurações e clique em **Deploy**. A primeira tentativa
-   vai **falhar** porque ainda não existe banco de dados — é normal.
-4. No projeto, abra a aba **Storage** → **Create Database** → escolha **Neon**
-   (Serverless Postgres) → **Continue**. Aceite o plano gratuito, escolha a
-   região **São Paulo (sa-east-1)** se aparecer, e confirme.
-   Na tela seguinte deixe marcados os ambientes e clique em **Connect**.
-   Isso cria sozinho as variáveis `DATABASE_URL` e `DATABASE_URL_UNPOOLED`.
-5. Vá na aba **Deployments**, clique nos três pontinhos do último deploy →
-   **Redeploy**. Agora vai dar certo (as tabelas são criadas automaticamente).
-6. Clique em **Visit** para abrir o endereço do site. Crie o administrador.
+2. Em **Import Git Repository**, clique em **Install** e dê acesso ao repositório **Trip**.
+3. Clique em **Import** ao lado de **Trip** e depois em **Create Project** (sem mudar nada).
+4. Em **Optional Integrations**, clique em **Add** ao lado de **Prisma Postgres**
+   (ou, depois, na aba **Storage** do projeto, crie um banco **Neon** ou **Prisma Postgres**).
+   Escolha o plano gratuito e a região mais perto (São Paulo, se houver) e confirme.
+   As variáveis do banco são criadas sozinhas — o projeto entende os nomes de qualquer um deles.
+5. Clique em **Deploy**. As tabelas são criadas automaticamente.
+   (Se o deploy tiver sido feito antes de conectar o banco, ele falha: conecte o banco e
+   use **Deployments → ⋯ → Redeploy**.)
+6. Abra o endereço do site e crie o administrador.
 7. No menu, **Importar planilha** → escolha o arquivo `.xlsx` → confira → **Confirmar**.
 8. Em **Usuários**, cadastre as outras pessoas da equipe e passe a elas o
    endereço do site, o e-mail e a senha inicial.
