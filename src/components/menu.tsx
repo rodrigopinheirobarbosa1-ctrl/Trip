@@ -15,6 +15,7 @@ const GRUPOS: Grupo[] = [
       { href: '/entradas', texto: 'Entradas' },
       { href: '/transferencias', texto: 'Transferências' },
       { href: '/saidas', texto: 'Emissões e vendas' },
+      { href: '/lotes', texto: 'Lotes' },
       { href: '/extrato', texto: 'Extrato' },
     ],
   },

@@ -1,8 +1,8 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { carregarCarteira, listasLancamento, saldosParaFormulario } from '@/lib/dados'
-import { centavosParaCampo, dataParaCampo, formatarPontos } from '@/lib/formatos'
-import { Cabecalho, Cartao } from '@/components/ui'
+import { centavosParaCampo, dataParaCampo, formatarCmp, formatarData, formatarPontos } from '@/lib/formatos'
+import { Aviso, Cabecalho, Cartao, Dinheiro, Tabela, Td, Th } from '@/components/ui'
 import { BotaoExcluir } from '@/components/excluir'
 import { FormularioSaida } from '../formulario'
 import { excluirSaida, salvarSaida } from '../actions'
@@ -17,6 +17,7 @@ export default async function EditarSaida({ params }: { params: Promise<{ id: st
     carregarCarteira(),
   ])
   const campoValor = (c: number) => (c ? centavosParaCampo(c) : '')
+  const consumo = carteira.custoSaidas.get(s.id)
 
   return (
     <>
@@ -55,6 +56,50 @@ export default async function EditarSaida({ params }: { params: Promise<{ id: st
           }}
         />
       </Cartao>
+      {consumo && (
+        <Cartao titulo="De onde saíram os pontos (lotes mais antigos primeiro)" className="mt-6 max-w-4xl">
+          <Tabela>
+            <thead>
+              <tr>
+                <Th>Lote de</Th>
+                <Th alinhar="direita">Pontos usados</Th>
+                <Th alinhar="direita">CMP do lote</Th>
+                <Th alinhar="direita">Custo</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {consumo.lotes.map((l, i) => (
+                <tr key={i}>
+                  <Td>{formatarData(l.data)}</Td>
+                  <Td alinhar="direita">{formatarPontos(l.pontos)}</Td>
+                  <Td alinhar="direita">{formatarCmp(l.cmp)}</Td>
+                  <Td alinhar="direita">
+                    <Dinheiro centavos={l.custo} />
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="font-semibold">
+                <Td>Total</Td>
+                <Td alinhar="direita">{formatarPontos(s.pontos)}</Td>
+                <Td alinhar="direita">{formatarCmp(consumo.cmp)}</Td>
+                <Td alinhar="direita">
+                  <Dinheiro centavos={consumo.custo} />
+                </Td>
+              </tr>
+            </tfoot>
+          </Tabela>
+          {consumo.semLote > 0 && (
+            <div className="mt-3">
+              <Aviso tom="amarelo">
+                {formatarPontos(consumo.semLote)} pontos saíram sem lote (faltava saldo nessa data) e foram custeados pelo
+                último CMP conhecido. Lance a entrada que falta para o custo ficar exato.
+              </Aviso>
+            </div>
+          )}
+        </Cartao>
+      )}
       <div className="mt-6 max-w-4xl">
         <BotaoExcluir acao={excluirSaida.bind(null, s.id)} pergunta="Excluir esta emissão? Os pontos voltam para o saldo." />
       </div>

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { db } from '@/lib/db'
 import { exigirUsuario } from '@/lib/auth'
-import { anosDisponiveis, carregarCarteira, carregarItensCaixa, carregarNomes } from '@/lib/dados'
+import { anosDisponiveis, carregarCarteiraComRecente, carregarItensCaixa, carregarNomes, PERIODOS_CMP_RECENTE } from '@/lib/dados'
 import { calcularFluxo, mesesDoAno } from '@/lib/fluxo'
 import { lerFiltros } from '@/lib/filtros'
 import { chaveMes, formatarCmp, formatarMes, formatarPontos, formatarReais, hoje } from '@/lib/formatos'
@@ -17,12 +17,27 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
   const filtros = lerFiltros(busca, new Date().getFullYear())
   const ano = filtros.ano ?? new Date().getFullYear()
   const titularFiltro = filtros.titular
+  const diasPedidos = Number(typeof busca.dias === 'string' ? busca.dias : 90)
+  const dias = (PERIODOS_CMP_RECENTE as readonly number[]).includes(diasPedidos) ? diasPedidos : 90
 
-  const [nomes, carteira, caixa] = await Promise.all([
+  const [nomes, { carteira, recente }, caixa] = await Promise.all([
     carregarNomes(),
-    carregarCarteira(),
+    carregarCarteiraComRecente(dias),
     carregarItensCaixa(titularFiltro ?? undefined),
   ])
+  const recenteFiltrado = [...recente.entries()].filter(([chave]) => !titularFiltro || chave.startsWith(`${titularFiltro}|`))
+  const recentePorPrograma = (programaId: string) => {
+    const xs = recenteFiltrado.filter(([chave]) => chave.endsWith(`|${programaId}`)).map(([, v]) => v)
+    const pontos = xs.reduce((s, v) => s + v.pontos, 0)
+    const custo = xs.reduce((s, v) => s + v.custo, 0)
+    return { pontos, cmp: pontos ? (custo / pontos) * 1000 : null }
+  }
+  const linkDias = (d: number) => {
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(busca)) if (typeof v === 'string' && k !== 'dias') q.set(k, v)
+    q.set('dias', String(d))
+    return `/painel?${q.toString()}`
+  }
 
   if (nomes.titulares.length === 0) {
     return (
@@ -159,7 +174,23 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
           ))}
       </div>
 
-      <Cartao titulo="Saldos por programa e pessoa">
+      <Cartao
+        titulo="Saldos por programa e pessoa"
+        acao={
+          <div className="flex flex-wrap items-center gap-1 text-xs nao-imprimir">
+            <span className="mr-1 text-slate-500">CMP recente:</span>
+            {PERIODOS_CMP_RECENTE.map((d) => (
+              <Link
+                key={d}
+                href={linkDias(d)}
+                className={`rounded-full border px-2 py-0.5 ${d === dias ? 'border-marca-600 bg-marca-600 text-white' : 'border-slate-300 text-slate-600'}`}
+              >
+                {d} dias
+              </Link>
+            ))}
+          </div>
+        }
+      >
         {programasNaTabela.length === 0 ? (
           <Vazio texto="Nenhum saldo ainda." />
         ) : (
@@ -173,8 +204,9 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
                   </Th>
                 ))}
                 <Th alinhar="direita">Total</Th>
-                <Th alinhar="direita">CMP</Th>
+                <Th alinhar="direita">CMP em carteira</Th>
                 <Th alinhar="direita">Custo</Th>
+                <Th alinhar="direita">CMP recente ({dias} dias)</Th>
               </tr>
             </thead>
             <tbody>
@@ -183,6 +215,7 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
                 const pos = linha.filter((p) => p.pontos > 0)
                 const pontos = pos.reduce((s, p) => s + p.pontos, 0)
                 const custo = pos.reduce((s, p) => s + p.custo, 0)
+                const rec = recentePorPrograma(pr.id)
                 return (
                   <tr key={pr.id} className="hover:bg-slate-50">
                     <Td className="font-medium">{pr.nome}</Td>
@@ -206,13 +239,30 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
                     </Td>
                     <Td alinhar="direita">{formatarCmp(pontos ? (custo / pontos) * 1000 : null)}</Td>
                     <Td alinhar="direita">{formatarReais(custo)}</Td>
+                    <Td alinhar="direita">
+                      {rec.pontos > 0 ? (
+                        <>
+                          {formatarCmp(rec.cmp)}
+                          <span className="block text-xs text-slate-400">{formatarPontos(rec.pontos)} pts gerados</span>
+                        </>
+                      ) : (
+                        <span className="text-slate-300">-</span>
+                      )}
+                    </Td>
                   </tr>
                 )
               })}
             </tbody>
           </Tabela>
         )}
-        <p className="mt-3 text-xs text-slate-400">Clique num saldo para ver o extrato. Passe o mouse para ver o CMP de cada pessoa.</p>
+        <p className="mt-3 text-xs text-slate-400">
+          Clique num saldo para ver o extrato. Passe o mouse para ver o CMP de cada pessoa. <strong>CMP em carteira</strong> é o
+          custo dos pontos guardados (por lotes). <strong>CMP recente</strong> é quanto custou cada milheiro que entrou nos últimos{' '}
+          {dias} dias — compras, bônus e transferências recebidas —, útil para decidir o preço de venda.{' '}
+          <Link href="/lotes" className="underline">
+            Ver lotes
+          </Link>
+        </p>
       </Cartao>
     </>
   )

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { BotaoEnviar, Formulario, type EstadoForm } from '@/components/form'
 import { Campo } from '@/components/ui'
 import { SaldoDisponivel, type SaldosForm } from '@/components/saldo-disponivel'
+import { previaPeps } from '@/lib/carteira'
 import { formatarCmp, formatarReais, lerCentavos, lerPontos } from '@/lib/formatos'
 import { FORMAS_PAGAMENTO, opcoes, TIPOS_SAIDA } from '@/lib/rotulos'
 
@@ -61,7 +62,9 @@ export function FormularioSaida({
   // Na edição, enquanto pessoa e programa não mudam, vale o CMP da data da emissão.
   const usaCmpDaOperacao =
     cmpDaOperacao !== undefined && cmpDaOperacao !== null && titularId === valores.titularId && programaId === valores.programaId
-  const cmp = usaCmpDaOperacao ? cmpDaOperacao : (saldos[`${titularId}|${programaId}`]?.cmp ?? null)
+  // Lançamento novo: os pontos saem dos lotes mais antigos (PEPS).
+  const previa = !usaCmpDaOperacao && p ? previaPeps(saldos[`${titularId}|${programaId}`]?.lotes ?? [], p) : null
+  const cmp = usaCmpDaOperacao ? cmpDaOperacao : (previa?.cmp ?? null)
   const custoPontos = cmp !== null && p ? (cmp * p) / 1000 : null
   const custo = custoPontos !== null ? custoPontos + (lerCentavos(taxa) ?? 0) : null
   const valorVenda = lerCentavos(venda) ?? 0
@@ -126,7 +129,7 @@ export function FormularioSaida({
       {custo !== null && (
         <div className="grid gap-2 rounded-lg bg-slate-50 px-4 py-3 text-sm sm:grid-cols-3">
           <p>
-            CMP {usaCmpDaOperacao ? 'na data da emissão' : 'de hoje'}: <strong>{formatarCmp(cmp)}</strong>
+            CMP {usaCmpDaOperacao ? 'na data da emissão' : 'dos lotes mais antigos'}: <strong>{formatarCmp(cmp)}</strong>
           </p>
           <p>
             Custo (pontos + taxa): <strong>{formatarReais(custo)}</strong>

@@ -2,9 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   calcularCarteira,
+  calcularCmpRecente,
   calcularPontosDestino,
   chavePosicao,
   conferirSaldos,
+  previaPeps,
   type Movimentos,
 } from '../src/lib/carteira'
 
@@ -21,7 +23,7 @@ test('CMP de uma compra simples', () => {
   assert.equal(Math.round(p.cmp!), 3032)
 })
 
-test('média ponderada entre duas compras', () => {
+test('CMP da posição é a média dos lotes que ainda têm pontos', () => {
   const m = vazio()
   m.entradas.push({ id: 'e1', data: d('2026-01-01'), titularId: 't', programaId: 'p', pontos: 100000, valor: 300000 }) // 30,00
   m.entradas.push({ id: 'e2', data: d('2026-01-02'), titularId: 't', programaId: 'p', pontos: 100000, valor: 200000 }) // 20,00
@@ -30,7 +32,38 @@ test('média ponderada entre duas compras', () => {
   assert.equal(p.cmp, 2500)
 })
 
-test('saída retira pelo CMP do momento e não muda o CMP do que sobra', () => {
+test('PEPS: a venda consome primeiro o lote mais antigo', () => {
+  const m = vazio()
+  // Compra cara em janeiro, promoção barata em fevereiro.
+  m.entradas.push({ id: 'cara', data: d('2026-01-10'), titularId: 't', programaId: 'p', pontos: 100000, valor: 220000 }) // R$ 22
+  m.entradas.push({ id: 'promo', data: d('2026-02-10'), titularId: 't', programaId: 'p', pontos: 100000, valor: 120000 }) // R$ 12
+  m.saidas.push({ id: 'v1', data: d('2026-03-10'), titularId: 't', programaId: 'p', pontos: 150000 })
+  const c = calcularCarteira(m)
+  const venda = c.custoSaidas.get('v1')!
+  // 100 mil a R$ 22 + 50 mil a R$ 12 = R$ 2.800 (R$ 18,67 o milheiro)
+  assert.equal(venda.custo, 280000)
+  assert.equal(Math.round(venda.cmp), 1867)
+  assert.deepEqual(venda.lotes.map((l) => [l.loteId, l.pontos]), [['cara', 100000], ['promo', 50000]])
+  // Sobram só os pontos da promoção, a R$ 12.
+  const p = c.posicoes.get(chavePosicao('t', 'p'))!
+  assert.equal(p.pontos, 50000)
+  assert.equal(p.cmp, 1200)
+  const lotes = c.lotes.get(chavePosicao('t', 'p'))!
+  assert.deepEqual(lotes.map((l) => l.restantes), [0, 50000])
+})
+
+test('PEPS: compra cara antiga não contamina o custo depois de consumida', () => {
+  const m = vazio()
+  m.entradas.push({ id: 'cara', data: d('2026-01-01'), titularId: 't', programaId: 'p', pontos: 100000, valor: 220000 })
+  m.saidas.push({ id: 'v1', data: d('2026-01-05'), titularId: 't', programaId: 'p', pontos: 100000 })
+  m.entradas.push({ id: 'normal', data: d('2026-02-01'), titularId: 't', programaId: 'p', pontos: 100000, valor: 160000 })
+  m.saidas.push({ id: 'v2', data: d('2026-02-05'), titularId: 't', programaId: 'p', pontos: 40000 })
+  const c = calcularCarteira(m)
+  assert.equal(c.custoSaidas.get('v2')!.cmp, 1600)
+  assert.equal(c.posicoes.get(chavePosicao('t', 'p'))!.cmp, 1600)
+})
+
+test('saída dentro de um lote só usa o custo daquele lote', () => {
   const m = vazio()
   m.entradas.push({ id: 'e1', data: d('2026-01-01'), titularId: 't', programaId: 'p', pontos: 100000, valor: 300000 })
   m.saidas.push({ id: 's1', data: d('2026-01-05'), titularId: 't', programaId: 'p', pontos: 40000 })
@@ -39,15 +72,6 @@ test('saída retira pelo CMP do momento e não muda o CMP do que sobra', () => {
   assert.equal(p.pontos, 60000)
   assert.equal(p.cmp, 3000)
   assert.equal(c.custoSaidas.get('s1')!.custo, 120000) // 40 milheiros x R$ 30
-})
-
-test('compra nova depois de vender tudo usa só o custo novo (diferente da planilha)', () => {
-  const m = vazio()
-  m.entradas.push({ id: 'e1', data: d('2026-01-01'), titularId: 't', programaId: 'p', pontos: 100000, valor: 300000 })
-  m.saidas.push({ id: 's1', data: d('2026-01-02'), titularId: 't', programaId: 'p', pontos: 100000 })
-  m.entradas.push({ id: 'e2', data: d('2026-01-03'), titularId: 't', programaId: 'p', pontos: 100000, valor: 200000 })
-  const p = calcularCarteira(m).posicoes.get(chavePosicao('t', 'p'))!
-  assert.equal(p.cmp, 2000)
 })
 
 test('transferência com bônus: 200.000 Livelo + 90% -> 380.000 Smiles, custo vai junto', () => {
@@ -168,4 +192,54 @@ test('conferirSaldos bloqueia excluir uma entrada que já foi usada', () => {
   antes.saidas.push({ id: 's1', data: d('2026-01-02'), titularId: 't', programaId: 'p', pontos: 8000 })
   const depois: Movimentos = { ...antes, entradas: [] }
   assert.ok(conferirSaldos(antes, depois, [chavePosicao('t', 'p')]))
+})
+
+test('transferência vira um lote no destino com o custo dos lotes da origem', () => {
+  const m = vazio()
+  m.entradas.push({ id: 'l1', data: d('2026-01-01'), titularId: 't', programaId: 'livelo', pontos: 100000, valor: 300000 }) // R$ 30
+  m.entradas.push({ id: 'l2', data: d('2026-01-02'), titularId: 't', programaId: 'livelo', pontos: 100000, valor: 250000 }) // R$ 25
+  m.transferencias.push({
+    id: 't1', data: d('2026-01-10'), titularId: 't', origemId: 'livelo', destinoId: 'smiles', pontos: 150000, pontosDestino: 300000,
+  })
+  const c = calcularCarteira(m)
+  // 100 mil a R$ 30 + 50 mil a R$ 25 = R$ 4.250 levados para 300 mil Smiles (R$ 14,17)
+  const lote = c.lotes.get(chavePosicao('t', 'smiles'))![0]
+  assert.equal(lote.origem, 'TRANSFERENCIA')
+  assert.equal(lote.custo, 425000)
+  assert.equal(Math.round(lote.cmp), 1417)
+  assert.equal(c.posicoes.get(chavePosicao('t', 'livelo'))!.cmp, 2500)
+})
+
+test('falta de saldo: a próxima entrada cobre primeiro o déficit', () => {
+  const m = vazio()
+  m.entradas.push({ id: 'e1', data: d('2026-01-01'), titularId: 't', programaId: 'p', pontos: 10000, valor: 30000 })
+  m.saidas.push({ id: 's1', data: d('2026-01-02'), titularId: 't', programaId: 'p', pontos: 15000 })
+  m.entradas.push({ id: 'e2', data: d('2026-01-03'), titularId: 't', programaId: 'p', pontos: 20000, valor: 40000 })
+  const c = calcularCarteira(m)
+  const s1 = c.custoSaidas.get('s1')!
+  assert.equal(s1.semLote, 5000)
+  assert.equal(s1.custo, 45000) // 10 mil do lote + 5 mil pelo último CMP (R$ 30)
+  const p = c.posicoes.get(chavePosicao('t', 'p'))!
+  assert.equal(p.pontos, 15000)
+  const e2 = c.lotes.get(chavePosicao('t', 'p'))![1]
+  assert.equal(e2.cobriuDeficit, 5000)
+  assert.equal(e2.restantes, 15000)
+})
+
+test('prévia PEPS nos formulários', () => {
+  assert.deepEqual(previaPeps([[100000, 2200], [100000, 1200]], 150000), { custo: 280000, cmp: (280000 / 150000) * 1000 })
+  assert.equal(previaPeps([[1000, 2000]], 5000), null)
+})
+
+test('CMP recente: só o que entrou no período, sem saldo inicial', () => {
+  const m = vazio()
+  m.entradas.push({ id: 'si', data: d('2026-01-01'), titularId: 't', programaId: 'p', pontos: 500000, valor: 1500000, categoria: 'SALDO_INICIAL' })
+  m.entradas.push({ id: 'velha', data: d('2026-02-01'), titularId: 't', programaId: 'p', pontos: 100000, valor: 300000, categoria: 'COMPRA' })
+  m.entradas.push({ id: 'promo', data: d('2026-09-01'), titularId: 't', programaId: 'p', pontos: 100000, valor: 110000, categoria: 'COMPRA' })
+  m.entradas.push({ id: 'bonus', data: d('2026-09-02'), titularId: 't', programaId: 'p', pontos: 10000, valor: 0, categoria: 'BONUS' })
+  const c = calcularCarteira(m)
+  const r = calcularCmpRecente(m, c, d('2026-07-18'), d('2026-10-16')).get(chavePosicao('t', 'p'))!
+  assert.equal(r.pontos, 110000)
+  assert.equal(r.custo, 110000)
+  assert.equal(r.cmp, 1000)
 })
