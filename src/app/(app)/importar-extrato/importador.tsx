@@ -319,7 +319,9 @@ export function ImportadorExtrato({
                   <p className="text-xs text-slate-500">
                     Normalmente são lançamentos antigos (da planilha) duplicados ou com valor diferente. Os marcados serão{' '}
                     <strong>excluídos</strong> ao gravar, para o sistema ficar igual ao extrato. Transferências vêm desmarcadas:
-                    confira antes, porque mexem também no outro programa. Clique num item para abrir o lançamento.
+                    confira antes, porque mexem também no outro programa. Clique num item para abrir o lançamento. Todos os
+                    detalhes de cada excluído (valor pago, cartão, bônus...) ficam guardados no <strong>Histórico</strong>, para
+                    lançar de novo no CPF certo se aparecer no extrato de outra pessoa.
                   </p>
                 </div>
                 <div className="flex gap-2 text-xs">

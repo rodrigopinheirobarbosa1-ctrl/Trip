@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { db } from '@/lib/db'
 import { exigirUsuarioAction } from '@/lib/auth'
+import { detalharTransferencia } from '@/lib/detalhes-historico'
 import { auditar } from '@/lib/audit'
 import { validarSaldos } from '@/lib/dados'
 import { calcularPontosDestino, type MovTransferencia } from '@/lib/carteira'
@@ -103,7 +104,7 @@ export async function excluirTransferencia(id: string, _e: EstadoForm): Promise<
       acao: 'EXCLUIR',
       entidade: 'Transferencia',
       entidadeId: id,
-      resumo: `Excluiu transferência ${t.origem.nome} → ${t.destino.nome} de ${t.titular.nome} (${formatarData(t.data)})`,
+      resumo: `Excluiu — ${detalharTransferencia(t)}`,
     })
     revalidatePath('/', 'layout')
     redirect('/transferencias')
