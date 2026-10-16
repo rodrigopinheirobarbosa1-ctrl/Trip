@@ -6,8 +6,8 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { exigirUsuarioAction } from '@/lib/auth'
 import { auditar } from '@/lib/audit'
-import { carregarCarteira, validarSaldos } from '@/lib/dados'
-import { calcularPontosDestino, chavePosicao, type Movimentos } from '@/lib/carteira'
+import { carregarMovimentos, validarSaldos } from '@/lib/dados'
+import { calcularCarteira, calcularPontosDestino, chavePosicao, type Movimentos } from '@/lib/carteira'
 import { lerPaginaDoExtrato, type ResultadoLeitura } from '@/lib/extrato/ler-com-ia'
 import { ACOES, juntarPaginas, montarSugestoes, type LinhaLida, type Sugestao } from '@/lib/extrato/sugestao'
 
@@ -30,12 +30,27 @@ export async function lerPagina(entrada: {
   return lerPaginaDoExtrato({ pagina: entrada.pagina, dados: entrada.dados, tipo, programa: programa.nome })
 }
 
+/** Lançamento que o sistema tem no período do extrato, mas que o extrato não mostra. */
+export type ForaDoExtrato = {
+  tipo: 'ENTRADA' | 'SAIDA' | 'TRANSFERENCIA'
+  id: string
+  data: string
+  /** Efeito no saldo deste programa: positivo somava, negativo tirava. */
+  pontos: number
+  descricao: string
+  /** Transferências: o que a exclusão muda no outro programa. */
+  outroLado: string | null
+}
+
 export type Conferencia = {
   sugestoes: Sugestao[]
   saldoSistema: number
   programas: { id: string; nome: string }[]
   /** Já existe algum lançamento desta pessoa neste programa antes da primeira linha do extrato? */
   temLancamentoAntes: boolean
+  /** Saldo do sistema no dia anterior à primeira linha do extrato. */
+  saldoAntesDoPeriodo: number
+  foraDoExtrato: ForaDoExtrato[]
 }
 
 /** Junta as páginas lidas e sugere o que fazer com cada linha. */
@@ -48,23 +63,57 @@ export async function montarConferencia(entrada: {
   const { titularId, programaId } = entrada
   const linhas = juntarPaginas(entrada.paginas)
 
-  const [programas, regras, entradas, enviadas, recebidas, saidas, carteira] = await Promise.all([
+  const [programas, regras, entradas, enviadas, recebidas, saidas, movimentos] = await Promise.all([
     db.programa.findMany({ orderBy: { nome: 'asc' }, select: { id: true, nome: true } }),
     db.regraExtrato.findMany({ where: { programaId } }),
-    db.entrada.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true } }),
-    db.transferencia.findMany({ where: { titularId, origemId: programaId }, select: { id: true, data: true, pontos: true } }),
-    db.transferencia.findMany({ where: { titularId, destinoId: programaId }, select: { id: true, data: true, pontosDestino: true } }),
-    db.saida.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true } }),
-    carregarCarteira(),
+    db.entrada.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true, categoria: true, observacao: true } }),
+    db.transferencia.findMany({ where: { titularId, origemId: programaId }, select: { id: true, data: true, pontos: true, pontosDestino: true, destino: { select: { nome: true } } } }),
+    db.transferencia.findMany({ where: { titularId, destinoId: programaId }, select: { id: true, data: true, pontos: true, pontosDestino: true, origem: { select: { nome: true } } } }),
+    db.saida.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true, tipo: true, cliente: true, observacao: true } }),
+    carregarMovimentos(),
   ])
 
-  const primeira = linhas[0] ? new Date(`${linhas[0].data}T00:00:00Z`).getTime() : Infinity
+  const chave = chavePosicao(titularId, programaId)
+  const sugestoes = montarSugestoes(linhas, { programaId, programas, regras, existentes: { entradas, enviadas, recebidas, saidas } })
+  const dia = (s: string) => new Date(`${s}T00:00:00Z`).getTime()
+  const primeira = linhas[0] ? dia(linhas[0].data) : Infinity
+  const ultima = linhas.length ? dia(linhas[linhas.length - 1].data) : -Infinity
   const antes = (xs: { data: Date }[]) => xs.some((x) => x.data.getTime() < primeira)
+  const noPeriodo = (d: Date) => d.getTime() >= primeira && d.getTime() <= ultima
+
+  // O que o sistema tem no período e não casou com nenhuma linha do extrato.
+  const casados = new Set(sugestoes.map((s) => s.jaLancado?.id).filter(Boolean))
+  const iso = (d: Date) => d.toISOString().slice(0, 10)
+  const foraDoExtrato: ForaDoExtrato[] = [
+    ...entradas.filter((e) => noPeriodo(e.data) && !casados.has(e.id)).map((e) => ({
+      tipo: 'ENTRADA' as const, id: e.id, data: iso(e.data), pontos: e.pontos,
+      descricao: ['Entrada', e.observacao].filter(Boolean).join(' · '), outroLado: null,
+    })),
+    ...saidas.filter((s) => noPeriodo(s.data) && !casados.has(s.id)).map((s) => ({
+      tipo: 'SAIDA' as const, id: s.id, data: iso(s.data), pontos: -s.pontos,
+      descricao: ['Saída', s.cliente, s.observacao].filter(Boolean).join(' · '), outroLado: null,
+    })),
+    ...enviadas.filter((t) => noPeriodo(t.data) && !casados.has(t.id)).map((t) => ({
+      tipo: 'TRANSFERENCIA' as const, id: t.id, data: iso(t.data), pontos: -t.pontos,
+      descricao: `Transferência para ${t.destino.nome}`,
+      outroLado: `excluir também tira ${t.pontosDestino.toLocaleString('pt-BR')} pontos da ${t.destino.nome}`,
+    })),
+    ...recebidas.filter((t) => noPeriodo(t.data) && !casados.has(t.id)).map((t) => ({
+      tipo: 'TRANSFERENCIA' as const, id: t.id, data: iso(t.data), pontos: t.pontosDestino,
+      descricao: `Transferência de ${t.origem.nome}`,
+      outroLado: `excluir também devolve ${t.pontos.toLocaleString('pt-BR')} pontos para a ${t.origem.nome}`,
+    })),
+  ].sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0))
+
+  const carteira = calcularCarteira(movimentos)
+  const antesDoPeriodo = Number.isFinite(primeira) ? calcularCarteira(movimentos, new Date(primeira - 86400000)) : carteira
   return {
-    sugestoes: montarSugestoes(linhas, { programaId, programas, regras, existentes: { entradas, enviadas, recebidas, saidas } }),
-    saldoSistema: carteira.posicoes.get(chavePosicao(titularId, programaId))?.pontos ?? 0,
+    sugestoes,
+    saldoSistema: carteira.posicoes.get(chave)?.pontos ?? 0,
     programas,
     temLancamentoAntes: antes(entradas) || antes(enviadas) || antes(recebidas) || antes(saidas),
+    saldoAntesDoPeriodo: antesDoPeriodo.posicoes.get(chave)?.pontos ?? 0,
+    foraDoExtrato,
   }
 }
 
@@ -95,7 +144,8 @@ export type ItemConfirmado = z.infer<typeof Item>
 /** Grava as linhas confirmadas como lançamentos. Tudo ou nada. */
 const SaldoInicial = z.object({
   data: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  pontos: z.number().int().positive(),
+  /** Positivo: pontos que já existiam. Negativo: ajuste para tirar pontos que o sistema tinha a mais. */
+  pontos: z.number().int().refine((n) => n !== 0),
   /** Custo total desses pontos (centavos); zero se não souber. */
   valor: z.number().int().nonnegative(),
 })
@@ -106,13 +156,21 @@ export async function gravarExtrato(entrada: {
   itens: ItemConfirmado[]
   /** Pontos que já existiam antes do período do extrato. */
   saldoInicial: z.infer<typeof SaldoInicial> | null
+  /** Lançamentos do sistema que não aparecem no extrato e devem ser apagados. */
+  excluir: { tipo: 'ENTRADA' | 'SAIDA' | 'TRANSFERENCIA'; id: string }[]
 }): Promise<{ erro?: string; ok?: string }> {
   const usuario = await exigirUsuarioAction()
   const r = z
-    .object({ titularId: z.string(), programaId: z.string(), itens: z.array(Item).max(2000), saldoInicial: SaldoInicial.nullable() })
+    .object({
+      titularId: z.string(),
+      programaId: z.string(),
+      itens: z.array(Item).max(2000),
+      saldoInicial: SaldoInicial.nullable(),
+      excluir: z.array(z.object({ tipo: z.enum(['ENTRADA', 'SAIDA', 'TRANSFERENCIA']), id: z.string() })).max(2000),
+    })
     .safeParse(entrada)
   if (!r.success) return { erro: `Dados inválidos: ${r.error.issues[0].path.join('.')} ${r.error.issues[0].message}` }
-  const { titularId, programaId, itens, saldoInicial } = r.data
+  const { titularId, programaId, itens, saldoInicial, excluir } = r.data
   const programa = await db.programa.findUnique({ where: { id: programaId } })
   if (!programa) return { erro: 'Programa não encontrado.' }
 
@@ -190,20 +248,40 @@ export async function gravarExtrato(entrada: {
     }
   }
   if (saldoInicial) {
+    const positivo = saldoInicial.pontos > 0
     entradas.unshift({
       data: dia(saldoInicial.data),
       titularId,
       programaId,
-      categoria: 'SALDO_INICIAL',
+      categoria: positivo ? 'SALDO_INICIAL' : 'AJUSTE',
       pontos: saldoInicial.pontos,
-      valor: saldoInicial.valor,
+      valor: positivo ? saldoInicial.valor : 0,
       formaPagamento: 'SEM_DESEMBOLSO',
       parcelas: 1,
-      observacao: 'Saldo anterior ao período do extrato',
+      observacao: positivo
+        ? 'Saldo anterior ao período do extrato'
+        : 'Ajuste para o saldo antes do período bater com o extrato',
       criadoPor,
     })
   }
-  const total = entradas.length + transferencias.length + saidas.length
+
+  // Confere que o que vai ser apagado é mesmo desta pessoa e deste programa.
+  const idsExcluir = { ENTRADA: [] as string[], SAIDA: [] as string[], TRANSFERENCIA: [] as string[] }
+  for (const x of excluir) idsExcluir[x.tipo].push(x.id)
+  const [entExcluir, saiExcluir, traExcluir] = await Promise.all([
+    db.entrada.findMany({ where: { id: { in: idsExcluir.ENTRADA }, titularId, programaId }, select: { id: true } }),
+    db.saida.findMany({ where: { id: { in: idsExcluir.SAIDA }, titularId, programaId }, select: { id: true } }),
+    db.transferencia.findMany({
+      where: { id: { in: idsExcluir.TRANSFERENCIA }, titularId, OR: [{ origemId: programaId }, { destinoId: programaId }] },
+      select: { id: true, origemId: true, destinoId: true },
+    }),
+  ])
+  if (entExcluir.length + saiExcluir.length + traExcluir.length !== excluir.length) {
+    return { erro: 'Algum lançamento marcado para exclusão não pertence a este programa ou já foi apagado. Leia o extrato de novo.' }
+  }
+  const apagar = new Set([...entExcluir, ...saiExcluir, ...traExcluir].map((x) => x.id))
+
+  const total = entradas.length + transferencias.length + saidas.length + apagar.size
   if (total === 0) return { erro: 'Nenhuma linha marcada para lançar.' }
 
   // Mesma regra dos lançamentos à mão: não pode deixar saldo negativo.
@@ -217,25 +295,25 @@ export async function gravarExtrato(entrada: {
     }
   }
   anotar(titularId, programaId)
-  for (const t of transferencias) {
+  for (const t of [...transferencias, ...traExcluir]) {
     anotar(titularId, t.origemId)
     anotar(titularId, t.destinoId)
   }
   const erroSaldo = await validarSaldos(
     (m): Movimentos => ({
       entradas: [
-        ...m.entradas,
+        ...m.entradas.filter((e) => !apagar.has(e.id)),
         ...entradas.map((e, n) => ({ id: `x-e${n}`, data: e.data, titularId, programaId, pontos: e.pontos, valor: e.valor ?? 0, ordem: agora + n })),
       ],
       transferencias: [
-        ...m.transferencias,
+        ...m.transferencias.filter((t) => !apagar.has(t.id)),
         ...transferencias.map((t, n) => ({
           id: `x-t${n}`, data: t.data, titularId, origemId: t.origemId, destinoId: t.destinoId,
           pontos: t.pontos, pontosDestino: t.pontosDestino, ordem: agora + n,
         })),
       ],
       saidas: [
-        ...m.saidas,
+        ...m.saidas.filter((s) => !apagar.has(s.id)),
         ...saidas.map((s, n) => ({ id: `x-s${n}`, data: s.data, titularId, programaId, pontos: s.pontos, ordem: agora + n })),
       ],
     }),
@@ -246,6 +324,9 @@ export async function gravarExtrato(entrada: {
   }
 
   await db.$transaction(async (tx) => {
+    if (entExcluir.length) await tx.entrada.deleteMany({ where: { id: { in: entExcluir.map((x) => x.id) } } })
+    if (saiExcluir.length) await tx.saida.deleteMany({ where: { id: { in: saiExcluir.map((x) => x.id) } } })
+    if (traExcluir.length) await tx.transferencia.deleteMany({ where: { id: { in: traExcluir.map((x) => x.id) } } })
     if (entradas.length) await tx.entrada.createMany({ data: entradas })
     for (const t of transferencias) await tx.transferencia.create({ data: t })
     if (saidas.length) await tx.saida.createMany({ data: saidas })
@@ -270,7 +351,9 @@ export async function gravarExtrato(entrada: {
   })
 
   const titular = await db.titular.findUnique({ where: { id: titularId } })
-  const resumo = `${entradas.length} entrada(s), ${transferencias.length} transferência(s) e ${saidas.length} saída(s)`
+  const resumo =
+    `${entradas.length} entrada(s), ${transferencias.length} transferência(s) e ${saidas.length} saída(s) lançadas` +
+    (apagar.size ? `; ${apagar.size} lançamento(s) que não estavam no extrato foram excluídos` : '')
   await auditar({
     usuario,
     acao: 'IMPORTAR',
