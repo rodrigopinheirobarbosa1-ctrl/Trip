@@ -1,0 +1,38 @@
+{
+  "name": "trip",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Controle de milhas e pontos de programas de fidelidade",
+  "scripts": {
+    "dev": "node scripts/preparar-env.mjs && prisma migrate deploy && next dev",
+    "build": "prisma generate && prisma migrate deploy && next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test testes/*.test.ts",
+    "db:migrar": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "env": "node scripts/preparar-env.mjs",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "bcryptjs": "2.4.3",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "read-excel-file": "9.3.12",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "2.4.6",
+    "@types/node": "22.10.7",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.5.1",
+    "prisma": "6.19.3",
+    "tailwindcss": "3.4.17",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3"
+  }
+}
