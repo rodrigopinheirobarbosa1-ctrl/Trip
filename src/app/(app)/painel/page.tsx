@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/link'
 import { db } from '@/lib/db'
 import { exigirUsuario } from '@/lib/auth'
 import { anosDisponiveis, carregarCarteiraComRecente, carregarItensCaixa, carregarNomes, PERIODOS_CMP_RECENTE } from '@/lib/dados'

@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/link'
 import { db } from '@/lib/db'
 import { formatarReais } from '@/lib/formatos'
 import { opcoes, rotulo, TIPOS_PROGRAMA } from '@/lib/rotulos'

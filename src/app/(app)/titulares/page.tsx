@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/link'
 import { db } from '@/lib/db'
 import { Cabecalho, Cartao, Dinheiro, Etiqueta, Tabela, Td, Th, Vazio } from '@/components/ui'
 import { BotaoEnviar, Formulario } from '@/components/form'

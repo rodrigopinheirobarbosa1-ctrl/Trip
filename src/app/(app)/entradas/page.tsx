@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/link'
 import { db } from '@/lib/db'
 import { anosDisponiveis, carregarNomes } from '@/lib/dados'
 import { intervaloDatas, lerFiltros } from '@/lib/filtros'

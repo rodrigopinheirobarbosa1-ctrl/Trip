@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/link'
 import { db } from '@/lib/db'
 import { carregarCarteira, carregarNomes } from '@/lib/dados'
 import { formatarCmp, formatarData, formatarPercentual, formatarPontos, hoje } from '@/lib/formatos'
