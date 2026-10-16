@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { db } from '@/lib/db'
 import { exigirUsuarioAction } from '@/lib/auth'
+import { detalharSaida } from '@/lib/detalhes-historico'
 import { auditar } from '@/lib/audit'
 import { validarSaldos } from '@/lib/dados'
 import type { MovSaida } from '@/lib/carteira'
@@ -110,7 +111,7 @@ export async function excluirSaida(id: string, _e: EstadoForm): Promise<EstadoFo
       acao: 'EXCLUIR',
       entidade: 'Saida',
       entidadeId: id,
-      resumo: `Excluiu ${TIPOS_SAIDA[s.tipo].toLowerCase()} de ${formatarPontos(s.pontos)} pontos ${s.programa.nome} de ${s.titular.nome} (${formatarData(s.data)})`,
+      resumo: `Excluiu — ${detalharSaida(s)}`,
     })
     revalidatePath('/', 'layout')
     redirect('/saidas')

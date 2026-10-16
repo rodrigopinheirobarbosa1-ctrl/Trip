@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { db } from '@/lib/db'
 import { exigirUsuarioAction } from '@/lib/auth'
+import { detalharEntrada } from '@/lib/detalhes-historico'
 import { auditar } from '@/lib/audit'
 import { validarSaldos } from '@/lib/dados'
 import { formatarData, formatarPontos, formatarReais } from '@/lib/formatos'
@@ -96,7 +97,7 @@ export async function salvarEntrada(id: string | null, _e: EstadoForm, dados: Fo
 export async function excluirEntrada(id: string, _e: EstadoForm): Promise<EstadoForm> {
   return tratarErros(async () => {
     const usuario = await exigirUsuarioAction()
-    const e = await db.entrada.findUniqueOrThrow({ where: { id }, include: { titular: true, programa: true } })
+    const e = await db.entrada.findUniqueOrThrow({ where: { id }, include: { titular: true, programa: true, cartao: true } })
     const erroSaldo = await validarSaldos(
       (m) => ({ ...m, entradas: m.entradas.filter((x) => x.id !== id) }),
       [[e.titularId, e.programaId]],
@@ -108,7 +109,7 @@ export async function excluirEntrada(id: string, _e: EstadoForm): Promise<Estado
       acao: 'EXCLUIR',
       entidade: 'Entrada',
       entidadeId: id,
-      resumo: `Excluiu entrada de ${formatarPontos(e.pontos)} pontos ${e.programa.nome} de ${e.titular.nome} (${formatarData(e.data)})`,
+      resumo: `Excluiu — ${detalharEntrada(e)}`,
     })
     revalidatePath('/', 'layout')
     redirect('/entradas')

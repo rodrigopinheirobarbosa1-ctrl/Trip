@@ -6,6 +6,7 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { exigirUsuarioAction } from '@/lib/auth'
 import { auditar } from '@/lib/audit'
+import { detalharEntrada, detalharSaida, detalharTransferencia } from '@/lib/detalhes-historico'
 import { carregarMovimentos, validarSaldos } from '@/lib/dados'
 import { calcularCarteira, calcularPontosDestino, chavePosicao, type Movimentos } from '@/lib/carteira'
 import { lerPaginaDoExtrato, type ResultadoLeitura } from '@/lib/extrato/ler-com-ia'
@@ -269,11 +270,14 @@ export async function gravarExtrato(entrada: {
   const idsExcluir = { ENTRADA: [] as string[], SAIDA: [] as string[], TRANSFERENCIA: [] as string[] }
   for (const x of excluir) idsExcluir[x.tipo].push(x.id)
   const [entExcluir, saiExcluir, traExcluir] = await Promise.all([
-    db.entrada.findMany({ where: { id: { in: idsExcluir.ENTRADA }, titularId, programaId }, select: { id: true } }),
-    db.saida.findMany({ where: { id: { in: idsExcluir.SAIDA }, titularId, programaId }, select: { id: true } }),
+    db.entrada.findMany({
+      where: { id: { in: idsExcluir.ENTRADA }, titularId, programaId },
+      include: { titular: true, programa: true, cartao: true },
+    }),
+    db.saida.findMany({ where: { id: { in: idsExcluir.SAIDA }, titularId, programaId }, include: { titular: true, programa: true } }),
     db.transferencia.findMany({
       where: { id: { in: idsExcluir.TRANSFERENCIA }, titularId, OR: [{ origemId: programaId }, { destinoId: programaId }] },
-      select: { id: true, origemId: true, destinoId: true },
+      include: { titular: true, origem: true, destino: true },
     }),
   ])
   if (entExcluir.length + saiExcluir.length + traExcluir.length !== excluir.length) {
@@ -354,6 +358,22 @@ export async function gravarExtrato(entrada: {
   const resumo =
     `${entradas.length} entrada(s), ${transferencias.length} transferência(s) e ${saidas.length} saída(s) lançadas` +
     (apagar.size ? `; ${apagar.size} lançamento(s) que não estavam no extrato foram excluídos` : '')
+  // Tudo o que foi excluído fica descrito no histórico, para poder ser lançado
+  // de novo (por exemplo, no CPF certo) sem perder o valor pago ou o bônus.
+  const excluidos = [
+    ...entExcluir.map((e) => ({ entidade: 'Entrada', id: e.id, texto: detalharEntrada(e) })),
+    ...traExcluir.map((t) => ({ entidade: 'Transferencia', id: t.id, texto: detalharTransferencia(t) })),
+    ...saiExcluir.map((x) => ({ entidade: 'Saida', id: x.id, texto: detalharSaida(x) })),
+  ]
+  for (const x of excluidos) {
+    await auditar({
+      usuario,
+      acao: 'EXCLUIR',
+      entidade: x.entidade,
+      entidadeId: x.id,
+      resumo: `Excluiu ao importar o extrato ${programa.nome} (não estava no extrato) — ${x.texto}`,
+    })
+  }
   await auditar({
     usuario,
     acao: 'IMPORTAR',
