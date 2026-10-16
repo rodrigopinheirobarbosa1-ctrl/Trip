@@ -68,6 +68,8 @@ export function ImportadorExtrato({
   const [linhas, setLinhas] = useState<Linha[]>([])
   const [resultado, setResultado] = useState<{ erro?: string; ok?: string } | null>(null)
   const [saldoInicial, setSaldoInicial] = useState({ lancar: false, pontos: '', valor: '' })
+  /** Lançamentos do sistema, no período, que não aparecem no extrato e serão apagados. */
+  const [excluir, setExcluir] = useState<Set<string>>(new Set())
   const [gravando, iniciar] = useTransition()
 
   const lendo = progresso !== null && progresso.feitas < progresso.total
@@ -117,14 +119,20 @@ export function ImportadorExtrato({
     const c = await montarConferencia({ titularId, programaId, paginas: lidas })
     setConferencia(c)
     setLinhas(c.sugestoes.map(linhaInicial))
-    // Saldo antes do período = saldo final mostrado no extrato - tudo o que o extrato movimentou.
+    // O extrato é a referência. Com o saldo final dele dá para saber quanto havia antes do
+    // período: saldo final - tudo o que o extrato movimentou. O que o sistema já tinha antes
+    // do período é descontado, e a diferença vira saldo inicial (ou ajuste, se negativa).
     const saldoFinal = saldos.find((s) => s !== null) ?? null
-    const anterior = saldoFinal !== null ? saldoFinal - c.sugestoes.reduce((s, x) => s + x.linha.pontos, 0) : null
+    const ajuste =
+      saldoFinal !== null ? saldoFinal - c.sugestoes.reduce((s, x) => s + x.linha.pontos, 0) - c.saldoAntesDoPeriodo : null
     setSaldoInicial({
-      lancar: anterior !== null && anterior > 0 && !c.temLancamentoAntes,
-      pontos: anterior !== null && anterior > 0 ? formatarPontos(anterior) : '',
+      lancar: ajuste !== null && ajuste !== 0,
+      pontos: ajuste !== null && ajuste !== 0 ? formatarPontos(ajuste) : '',
       valor: '',
     })
+    // Com o saldo do extrato conhecido, o que não aparece nele vem marcado para excluir.
+    // Transferências não: mexem também no outro programa e podem ter saído de outra pessoa.
+    setExcluir(new Set(saldoFinal !== null ? c.foraDoExtrato.filter((f) => f.tipo !== 'TRANSFERENCIA').map((f) => f.id) : []))
     setProgresso(null)
   }
 
@@ -133,7 +141,11 @@ export function ImportadorExtrato({
 
   const marcadas = linhas.filter((l) => l.incluir && l.acao !== 'IGNORAR')
   const pontosSaldoInicial = saldoInicial.lancar ? (lerPontos(saldoInicial.pontos) ?? 0) : 0
-  const saldoDepois = (conferencia?.saldoSistema ?? 0) + pontosSaldoInicial + marcadas.reduce((s, l) => s + l.s.linha.pontos, 0)
+  const foraDoExtrato = conferencia?.foraDoExtrato ?? []
+  const efeitoExcluidos = foraDoExtrato.filter((f) => excluir.has(f.id)).reduce((s, f) => s + f.pontos, 0)
+  const mantidosForaDoExtrato = foraDoExtrato.filter((f) => !excluir.has(f.id)).reduce((s, f) => s + f.pontos, 0)
+  const saldoDepois =
+    (conferencia?.saldoSistema ?? 0) - efeitoExcluidos + pontosSaldoInicial + marcadas.reduce((s, l) => s + l.s.linha.pontos, 0)
   const primeiraData = linhas[0]?.s.linha.data
   const diaAntes = primeiraData ? new Date(new Date(`${primeiraData}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10) : null
   const comprasSemValor = marcadas.filter((l) => l.acao === 'COMPRA' && !lerCentavos(l.valor)).length
@@ -165,9 +177,10 @@ export function ImportadorExtrato({
         programaId,
         itens,
         saldoInicial:
-          saldoInicial.lancar && pontosIniciais && pontosIniciais > 0 && diaAntes
-            ? { data: diaAntes, pontos: pontosIniciais, valor: lerCentavos(saldoInicial.valor) ?? 0 }
+          saldoInicial.lancar && pontosIniciais && diaAntes
+            ? { data: diaAntes, pontos: pontosIniciais, valor: pontosIniciais > 0 ? (lerCentavos(saldoInicial.valor) ?? 0) : 0 }
             : null,
+        excluir: foraDoExtrato.filter((f) => excluir.has(f.id)).map((f) => ({ tipo: f.tipo, id: f.id })),
       })
       setResultado(r)
       if (r.ok) {
@@ -286,13 +299,81 @@ export function ImportadorExtrato({
               <p className="font-semibold">{saldoExtrato !== null ? formatarPontos(saldoExtrato) : 'não aparece nos prints'}</p>
               {saldoExtrato !== null && saldoExtrato !== saldoDepois && (
                 <p className="text-xs text-amber-700">
-                  Diferença de {formatarPontos(saldoDepois - saldoExtrato)}: faltam lançamentos de antes do período ou há linhas
-                  marcadas/desmarcadas a conferir.
+                  Diferença de {formatarPontos(saldoDepois - saldoExtrato)}.{' '}
+                  {mantidosForaDoExtrato !== 0
+                    ? `Os lançamentos fora do extrato que você vai manter somam ${formatarPontos(mantidosForaDoExtrato)} pontos: confira-os abaixo.`
+                    : 'Confira as linhas desmarcadas e o acerto do saldo anterior.'}
                 </p>
               )}
               {saldoExtrato !== null && saldoExtrato === saldoDepois && <p className="text-xs text-emerald-700">Bate com o extrato ✓</p>}
             </div>
           </div>
+
+          {foraDoExtrato.length > 0 && (
+            <div className="cartao space-y-3 p-4 text-sm">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold">
+                    {foraDoExtrato.length} lançamento(s) do sistema neste período não aparecem no extrato
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Normalmente são lançamentos antigos (da planilha) duplicados ou com valor diferente. Os marcados serão{' '}
+                    <strong>excluídos</strong> ao gravar, para o sistema ficar igual ao extrato. Transferências vêm desmarcadas:
+                    confira antes, porque mexem também no outro programa. Clique num item para abrir o lançamento.
+                  </p>
+                </div>
+                <div className="flex gap-2 text-xs">
+                  <button type="button" className="underline" onClick={() => setExcluir(new Set(foraDoExtrato.map((f) => f.id)))}>
+                    Marcar todos
+                  </button>
+                  <button type="button" className="underline" onClick={() => setExcluir(new Set())}>
+                    Manter todos
+                  </button>
+                </div>
+              </div>
+              <ul className="max-h-64 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+                {foraDoExtrato.map((f) => (
+                  <li key={f.id} className="flex items-center gap-3 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      aria-label="Excluir"
+                      checked={excluir.has(f.id)}
+                      onChange={(e) =>
+                        setExcluir((atual) => {
+                          const novo = new Set(atual)
+                          if (e.target.checked) novo.add(f.id)
+                          else novo.delete(f.id)
+                          return novo
+                        })
+                      }
+                    />
+                    <span className="w-24 shrink-0 text-slate-500">{formatarData(lerData(f.data))}</span>
+                    <span className="flex-1">
+                      <Link
+                        href={f.tipo === 'ENTRADA' ? `/entradas/${f.id}` : f.tipo === 'SAIDA' ? `/saidas/${f.id}` : `/transferencias/${f.id}`}
+                        target="_blank"
+                        className="hover:underline"
+                      >
+                        {f.descricao}
+                      </Link>
+                      {f.outroLado && (
+                        <span className="block text-xs text-amber-700">
+                          Atenção: {f.outroLado}. Se ela saiu da conta de outra pessoa, abra e corrija a pessoa em vez de excluir.
+                        </span>
+                      )}
+                    </span>
+                    <span className={`font-semibold tabular-nums ${f.pontos < 0 ? 'text-red-700' : 'text-emerald-700'}`}>
+                      {f.pontos > 0 ? '+' : ''}
+                      {formatarPontos(f.pontos)}
+                    </span>
+                    <span className={`w-20 text-right text-xs ${excluir.has(f.id) ? 'text-red-700' : 'text-slate-400'}`}>
+                      {excluir.has(f.id) ? 'excluir' : 'manter'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {diaAntes && (
             <div className="cartao space-y-2 p-4 text-sm">
@@ -304,13 +385,13 @@ export function ImportadorExtrato({
                   onChange={(e) => setSaldoInicial((s) => ({ ...s, lancar: e.target.checked }))}
                 />
                 <span>
-                  <strong>Lançar o saldo que já existia antes de {formatarData(lerData(primeiraData!))}</strong> como saldo inicial (em{' '}
+                  <strong>Acertar o saldo anterior a {formatarData(lerData(primeiraData!))}</strong> (lançado em{' '}
                   {formatarData(lerData(diaAntes))}).
                   <span className="block text-xs text-slate-500">
-                    {conferencia.temLancamentoAntes
-                      ? 'Já existem lançamentos deste programa antes do período: normalmente não precisa.'
-                      : 'Sem isso, as primeiras saídas do extrato deixariam o saldo negativo.'}
-                    {saldoExtrato !== null && ' O valor sugerido é o saldo final do extrato menos tudo o que ele movimentou.'}
+                    Antes do período o sistema tem {formatarPontos(conferencia.saldoAntesDoPeriodo)} pontos.
+                    {saldoExtrato !== null
+                      ? ' O valor sugerido faz o saldo final ficar igual ao do extrato. Positivo = pontos que já existiam; negativo = pontos que o sistema tinha a mais.'
+                      : ' O saldo total não aparece nos prints: informe o saldo anterior se souber.'}
                   </span>
                 </span>
               </label>
@@ -323,20 +404,26 @@ export function ImportadorExtrato({
                     inputMode="numeric"
                     className="campo w-36 py-1 text-xs"
                   />
-                  <span className="text-xs text-slate-500">pontos, que custaram</span>
-                  <input
-                    value={saldoInicial.valor}
-                    onChange={(e) => setSaldoInicial((s) => ({ ...s, valor: e.target.value }))}
-                    placeholder="R$ (opcional)"
-                    inputMode="decimal"
-                    className="campo w-32 py-1 text-xs"
-                  />
-                  {lerCentavos(saldoInicial.valor) && lerPontos(saldoInicial.pontos) ? (
-                    <span className="text-xs text-slate-500">
-                      CMP {formatarCmp(((lerCentavos(saldoInicial.valor) ?? 0) / (lerPontos(saldoInicial.pontos) ?? 1)) * 1000)}
-                    </span>
+                  {(lerPontos(saldoInicial.pontos) ?? 0) > 0 ? (
+                    <>
+                      <span className="text-xs text-slate-500">pontos, que custaram</span>
+                      <input
+                        value={saldoInicial.valor}
+                        onChange={(e) => setSaldoInicial((s) => ({ ...s, valor: e.target.value }))}
+                        placeholder="R$ (opcional)"
+                        inputMode="decimal"
+                        className="campo w-32 py-1 text-xs"
+                      />
+                      {lerCentavos(saldoInicial.valor) && lerPontos(saldoInicial.pontos) ? (
+                        <span className="text-xs text-slate-500">
+                          CMP {formatarCmp(((lerCentavos(saldoInicial.valor) ?? 0) / (lerPontos(saldoInicial.pontos) ?? 1)) * 1000)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-500">sem valor: entram com custo zero</span>
+                      )}
+                    </>
                   ) : (
-                    <span className="text-xs text-slate-500">sem valor: entram com custo zero</span>
+                    <span className="text-xs text-slate-500">pontos de ajuste (saem do saldo anterior ao período)</span>
                   )}
                 </div>
               )}
@@ -485,6 +572,7 @@ export function ImportadorExtrato({
           <div className="cartao flex flex-wrap items-center gap-3 p-4">
             <div className="flex-1 text-sm text-slate-600">
               <strong>{marcadas.length}</strong> lançamento(s) a gravar
+              {excluir.size > 0 && <>, <strong>{excluir.size}</strong> a excluir</>}
               {resumoPorAcao.length > 0 && ': ' + resumoPorAcao.map(([a, n]) => `${n} ${ACOES[a].toLowerCase()}`).join(', ')}
               {comprasSemValor > 0 && <span className="block text-amber-700">{comprasSemValor} compra(s) sem valor pago.</span>}
               {transfSemPrograma > 0 && <span className="block text-red-700">{transfSemPrograma} transferência(s) sem o outro programa.</span>}
@@ -492,7 +580,7 @@ export function ImportadorExtrato({
             <button type="button" onClick={() => { setConferencia(null); setLinhas([]) }} className="btn-secundario" disabled={gravando}>
               Cancelar
             </button>
-            <button type="button" onClick={gravar} className="btn-primario" disabled={gravando || marcadas.length === 0 || transfSemPrograma > 0}>
+            <button type="button" onClick={gravar} className="btn-primario" disabled={gravando || (marcadas.length === 0 && excluir.size === 0 && !saldoInicial.lancar) || transfSemPrograma > 0}>
               {gravando ? 'Gravando...' : 'Gravar lançamentos'}
             </button>
           </div>
