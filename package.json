@@ -5,7 +5,7 @@
   "description": "Controle de milhas e pontos de programas de fidelidade",
   "scripts": {
     "dev": "node scripts/preparar-env.mjs && prisma migrate deploy && next dev",
-    "build": "prisma generate && prisma migrate deploy && next build",
+    "build": "node scripts/build.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test testes/*.test.ts",
