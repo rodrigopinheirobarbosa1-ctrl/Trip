@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { BotaoEnviar, Formulario, type EstadoForm } from '@/components/form'
 import { Campo } from '@/components/ui'
 import { SaldoDisponivel, type SaldosForm } from '@/components/saldo-disponivel'
-import { calcularPontosDestino } from '@/lib/carteira'
+import { calcularPontosDestino, previaPeps } from '@/lib/carteira'
 import { formatarCmp, formatarPontos, formatarReais, lerNumero, lerPontos } from '@/lib/formatos'
 
 type Item = { id: string; nome: string }
@@ -47,9 +47,10 @@ export function FormularioTransferencia({
   const calculado = p && p > 0 ? calcularPontosDestino(p, b) : null
   const chegam = lerPontos(destinoManual) || calculado
 
-  // Prévia do custo, com o CMP de hoje da origem.
-  const cmpOrigem = saldos[`${titularId}|${origemId}`]?.cmp ?? null
-  const custo = cmpOrigem !== null && p ? (cmpOrigem * p) / 1000 : null
+  // Prévia do custo: os pontos saem dos lotes mais antigos da origem (PEPS).
+  const previa = p ? previaPeps(saldos[`${titularId}|${origemId}`]?.lotes ?? [], p) : null
+  const cmpOrigem = previa?.cmp ?? null
+  const custo = previa?.custo ?? null
   const cmpChegada = custo !== null && chegam ? (custo / chegam) * 1000 : null
 
   const selecao = (nome: string, valor: string, mudar: (v: string) => void, itens: Item[]) => (
@@ -112,7 +113,7 @@ export function FormularioTransferencia({
 
       {custo !== null && (
         <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-          Custo levado para o destino (pelo CMP de hoje da origem, {formatarCmp(cmpOrigem)}): <strong>{formatarReais(custo)}</strong>
+          Custo levado para o destino (lotes mais antigos da origem, {formatarCmp(cmpOrigem)} o milheiro): <strong>{formatarReais(custo)}</strong>
           {cmpChegada !== null && (
             <>
               {' '}

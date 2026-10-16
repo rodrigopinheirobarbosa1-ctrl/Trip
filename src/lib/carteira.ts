@@ -4,21 +4,28 @@
  * Código puro (sem banco): recebe os lançamentos e devolve os saldos. Por
  * isso é testado diretamente em testes/carteira.test.ts.
  *
- * MÉTODO: custo médio ponderado móvel.
- *  - Cada entrada soma pontos e soma o valor pago ao custo da posição.
- *  - Toda saída (venda, uso, transferência enviada) retira pontos pelo CMP
- *    do momento, e o custo da posição cai na mesma proporção.
- *  - A transferência leva para o destino o custo dos pontos que saíram da
- *    origem; o bônus entra sem custo e por isso baixa o CMP do destino.
+ * MÉTODO: PEPS (primeiro que entra, primeiro que sai), por lotes.
+ *  - Cada entrada de pontos (compra, bônus, transferência recebida) vira um
+ *    LOTE com o seu próprio custo por milheiro.
+ *  - Toda saída (venda, uso, transferência enviada) consome os lotes mais
+ *    antigos primeiro. O custo da saída é o custo exato dos pontos que saíram.
+ *  - A transferência leva para o destino o custo dos lotes que saíram da
+ *    origem, num lote novo; o bônus entra sem custo e por isso baixa o CMP
+ *    desse lote.
+ *  - Assim, uma promoção barata e uma compra cara ficam separadas: não se
+ *    misturam numa média.
  *
- * CMP (custo médio por milheiro) = custo da posição / pontos * 1000.
- *
- * Diferença em relação à planilha: lá o CMP era a média de TUDO o que já
- * entrou, mesmo de pontos que já foram vendidos. Aqui o CMP reflete só os
- * pontos que ainda estão na conta, que é o custo real do que sobrou.
+ * CMP da posição (custo médio por milheiro) = custo dos lotes que ainda têm
+ * pontos / pontos restantes * 1000. É uma informação de resumo; o lucro das
+ * vendas usa o custo real dos lotes consumidos.
  *
  * ORDEM: por data; no mesmo dia, entradas, depois transferências, depois
  * saídas (assim um bônus recebido de manhã já pode ser usado à tarde).
+ *
+ * FALTA DE SALDO (entradas que não foram lançadas): os pontos que saem sem
+ * lote usam o custo do último lote conhecido, e ficam como "déficit". A
+ * próxima entrada cobre primeiro esse déficit (aqueles pontos já tinham
+ * saído) e só o que sobra dela fica disponível.
  */
 
 export type MovEntrada = {
@@ -29,6 +36,8 @@ export type MovEntrada = {
   pontos: number
   valor: number // centavos
   ordem?: number // desempate no mesmo dia (ex.: criadoEm)
+  /** Categoria da entrada; usada no CMP recente (saldo inicial e ajuste não contam). */
+  categoria?: string
 }
 
 export type MovTransferencia = {
@@ -57,6 +66,24 @@ export type Movimentos = {
   saidas: MovSaida[]
 }
 
+/** Um lote de pontos, com custo próprio. */
+export type Lote = {
+  /** Id do lançamento que criou o lote (entrada ou transferência). */
+  id: string
+  origem: 'ENTRADA' | 'TRANSFERENCIA'
+  data: Date
+  /** Pontos que chegaram neste lote. */
+  pontos: number
+  /** Pontos ainda disponíveis. */
+  restantes: number
+  /** Pontos deste lote usados para cobrir saídas feitas antes dele (falta de saldo). */
+  cobriuDeficit: number
+  /** Custo total do lote em centavos (com fração). */
+  custo: number
+  /** Centavos por milheiro. */
+  cmp: number
+}
+
 export type Posicao = {
   titularId: string
   programaId: string
@@ -71,14 +98,21 @@ export type Posicao = {
   ficouNegativoEm: Date | null
 }
 
+/** De qual lote saíram os pontos de uma operação. */
+export type Consumo = { loteId: string; data: Date; pontos: number; cmp: number; custo: number }
+
 /** Custo atribuído a cada saída e a cada transferência, na data em que ocorreu. */
 export type CustoMovimento = {
-  /** CMP usado na operação (centavos por milheiro). */
+  /** CMP médio dos pontos que saíram nesta operação (centavos por milheiro). */
   cmp: number
   /** Custo dos pontos que saíram (centavos, com fração). */
   custo: number
   /** Saldo de pontos da origem logo depois da operação. */
   saldoDepois: number
+  /** Lotes consumidos, do mais antigo para o mais novo. */
+  lotes: Consumo[]
+  /** Pontos que saíram sem lote (faltava saldo), custeados pelo último CMP conhecido. */
+  semLote: number
 }
 
 export type LinhaExtrato = {
@@ -97,6 +131,8 @@ export type Carteira = {
   custoSaidas: Map<string, CustoMovimento>
   custoTransferencias: Map<string, CustoMovimento>
   extratos: Map<string, LinhaExtrato[]>
+  /** Lotes de cada posição, do mais antigo para o mais novo (inclusive os esgotados). */
+  lotes: Map<string, Lote[]>
 }
 
 export function chavePosicao(titularId: string, programaId: string): string {
@@ -108,8 +144,16 @@ type Evento =
   | { classe: 1; data: number; ordem: number; id: string; t: MovTransferencia }
   | { classe: 2; data: number; ordem: number; id: string; s: MovSaida }
 
-function cmpDe(p: Posicao): number | null {
-  return p.pontos > 0 ? (p.custo / p.pontos) * 1000 : null
+/** Estado interno de uma posição durante o cálculo. */
+type Estado = {
+  posicao: Posicao
+  lotes: Lote[]
+  /** Índice do lote mais antigo que ainda pode ter pontos. */
+  inicio: number
+  /** Pontos que saíram sem existir (falta de saldo). */
+  deficit: number
+  /** CMP do último lote conhecido, para custear pontos que faltaram. */
+  ultimoCmp: number | null
 }
 
 export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
@@ -121,84 +165,179 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
     .filter((ev) => ate === undefined || ev.data <= ate.getTime())
     .sort((a, b) => a.data - b.data || a.classe - b.classe || a.ordem - b.ordem || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 
-  const posicoes = new Map<string, Posicao>()
+  const estados = new Map<string, Estado>()
   const custoSaidas = new Map<string, CustoMovimento>()
   const custoTransferencias = new Map<string, CustoMovimento>()
   const extratos = new Map<string, LinhaExtrato[]>()
 
-  const posicao = (titularId: string, programaId: string): Posicao => {
+  const estado = (titularId: string, programaId: string): Estado => {
     const chave = chavePosicao(titularId, programaId)
-    let p = posicoes.get(chave)
-    if (!p) {
-      p = { titularId, programaId, pontos: 0, custo: 0, cmp: null, menorSaldo: 0, ficouNegativoEm: null }
-      posicoes.set(chave, p)
+    let st = estados.get(chave)
+    if (!st) {
+      st = {
+        posicao: { titularId, programaId, pontos: 0, custo: 0, cmp: null, menorSaldo: 0, ficouNegativoEm: null },
+        lotes: [],
+        inicio: 0,
+        deficit: 0,
+        ultimoCmp: null,
+      }
+      estados.set(chave, st)
       extratos.set(chave, [])
     }
-    return p
+    return st
   }
 
-  const anotar = (p: Posicao, linha: Omit<LinhaExtrato, 'saldo' | 'custoSaldo' | 'cmp'>) => {
-    p.cmp = cmpDe(p)
-    if (p.cmp !== null) ultimoCmp.set(p, p.cmp)
+  /** Recalcula custo e CMP da posição a partir dos lotes restantes. */
+  const atualizar = (st: Estado) => {
+    let restantes = 0
+    let custo = 0
+    for (let i = st.inicio; i < st.lotes.length; i++) {
+      const l = st.lotes[i]
+      if (l.restantes <= 0) continue
+      restantes += l.restantes
+      custo += (l.cmp * l.restantes) / 1000
+    }
+    const p = st.posicao
+    p.pontos = restantes - st.deficit
+    p.custo = custo
+    p.cmp = restantes > 0 ? (custo / restantes) * 1000 : null
+  }
+
+  const anotar = (st: Estado, linha: Omit<LinhaExtrato, 'saldo' | 'custoSaldo' | 'cmp'>) => {
+    atualizar(st)
+    const p = st.posicao
     if (p.pontos < p.menorSaldo) p.menorSaldo = p.pontos
     if (p.pontos < 0 && !p.ficouNegativoEm) p.ficouNegativoEm = linha.data
-    extratos.get(chavePosicao(p.titularId, p.programaId))!.push({
-      ...linha,
-      saldo: p.pontos,
-      custoSaldo: p.custo,
-      cmp: p.cmp,
-    })
+    extratos.get(chavePosicao(p.titularId, p.programaId))!.push({ ...linha, saldo: p.pontos, custoSaldo: p.custo, cmp: p.cmp })
   }
 
-  // Último CMP conhecido de cada posição. Quando faltam pontos (entradas que
-  // não foram lançadas), a saída usa esse custo em vez de zero: é a melhor
-  // estimativa do que os pontos que faltam custaram, e evita que uma
-  // transferência leve custo zero e derrube o CMP do destino.
-  const ultimoCmp = new Map<Posicao, number>()
+  /** Cria um lote novo (o déficit, se houver, é coberto primeiro). */
+  const acrescentar = (st: Estado, lote: Omit<Lote, 'restantes' | 'cobriuDeficit' | 'cmp'>) => {
+    const cmp = lote.pontos > 0 ? (lote.custo / lote.pontos) * 1000 : 0
+    const cobre = Math.min(st.deficit, lote.pontos)
+    st.deficit -= cobre
+    st.lotes.push({ ...lote, cmp, restantes: lote.pontos - cobre, cobriuDeficit: cobre })
+    st.ultimoCmp = cmp
+  }
 
-  /** Retira pontos pelo CMP atual e devolve o custo retirado. */
-  const retirar = (p: Posicao, pontos: number): { cmp: number; custo: number } => {
-    const cmp = cmpDe(p) ?? ultimoCmp.get(p) ?? 0
-    const custo = (cmp * pontos) / 1000
-    p.pontos -= pontos
-    p.custo = p.pontos > 0 ? Math.max(0, p.custo - custo) : 0
-    return { cmp, custo }
+  /** Retira pontos dos lotes mais antigos primeiro. */
+  const retirar = (st: Estado, pontos: number): Omit<CustoMovimento, 'saldoDepois'> => {
+    let falta = pontos
+    let custo = 0
+    const consumos: Consumo[] = []
+    while (falta > 0 && st.inicio < st.lotes.length) {
+      const l = st.lotes[st.inicio]
+      if (l.restantes <= 0) {
+        st.inicio++
+        continue
+      }
+      const usa = Math.min(falta, l.restantes)
+      const c = (l.cmp * usa) / 1000
+      l.restantes -= usa
+      falta -= usa
+      custo += c
+      consumos.push({ loteId: l.id, data: l.data, pontos: usa, cmp: l.cmp, custo: c })
+      st.ultimoCmp = l.cmp
+      if (l.restantes === 0) st.inicio++
+    }
+    if (falta > 0) {
+      // Faltou saldo: custeia pelo último CMP conhecido e guarda o déficit.
+      custo += ((st.ultimoCmp ?? 0) * falta) / 1000
+      st.deficit += falta
+    }
+    return { cmp: pontos > 0 ? (custo / pontos) * 1000 : 0, custo, lotes: consumos, semLote: falta }
   }
 
   for (const ev of eventos) {
     if (ev.classe === 0) {
       const { e } = ev
-      const p = posicao(e.titularId, e.programaId)
+      const st = estado(e.titularId, e.programaId)
       if (e.pontos >= 0) {
-        p.pontos += e.pontos
-        p.custo += e.valor
-        anotar(p, { tipo: 'ENTRADA', id: e.id, data: e.data, pontos: e.pontos, custo: e.valor })
+        if (e.pontos > 0) acrescentar(st, { id: e.id, origem: 'ENTRADA', data: e.data, pontos: e.pontos, custo: e.valor })
+        anotar(st, { tipo: 'ENTRADA', id: e.id, data: e.data, pontos: e.pontos, custo: e.valor })
       } else {
         // Ajuste negativo: funciona como uma saída.
-        const r = retirar(p, -e.pontos)
-        anotar(p, { tipo: 'ENTRADA', id: e.id, data: e.data, pontos: e.pontos, custo: -r.custo })
+        const r = retirar(st, -e.pontos)
+        anotar(st, { tipo: 'ENTRADA', id: e.id, data: e.data, pontos: e.pontos, custo: -r.custo })
       }
     } else if (ev.classe === 1) {
       const { t } = ev
-      const origem = posicao(t.titularId, t.origemId)
+      const origem = estado(t.titularId, t.origemId)
       const r = retirar(origem, t.pontos)
-      custoTransferencias.set(t.id, { ...r, saldoDepois: origem.pontos })
       anotar(origem, { tipo: 'TRANSFERENCIA_ENVIADA', id: t.id, data: t.data, pontos: -t.pontos, custo: -r.custo })
+      custoTransferencias.set(t.id, { ...r, saldoDepois: origem.posicao.pontos })
 
-      const destino = posicao(t.titularId, t.destinoId)
-      destino.pontos += t.pontosDestino
-      destino.custo += r.custo
+      const destino = estado(t.titularId, t.destinoId)
+      if (t.pontosDestino > 0) {
+        acrescentar(destino, { id: t.id, origem: 'TRANSFERENCIA', data: t.data, pontos: t.pontosDestino, custo: r.custo })
+      }
       anotar(destino, { tipo: 'TRANSFERENCIA_RECEBIDA', id: t.id, data: t.data, pontos: t.pontosDestino, custo: r.custo })
     } else {
       const { s } = ev
-      const p = posicao(s.titularId, s.programaId)
-      const r = retirar(p, s.pontos)
-      custoSaidas.set(s.id, { ...r, saldoDepois: p.pontos })
-      anotar(p, { tipo: 'SAIDA', id: s.id, data: s.data, pontos: -s.pontos, custo: -r.custo })
+      const st = estado(s.titularId, s.programaId)
+      const r = retirar(st, s.pontos)
+      anotar(st, { tipo: 'SAIDA', id: s.id, data: s.data, pontos: -s.pontos, custo: -r.custo })
+      custoSaidas.set(s.id, { ...r, saldoDepois: st.posicao.pontos })
     }
   }
 
-  return { posicoes, custoSaidas, custoTransferencias, extratos }
+  const posicoes = new Map<string, Posicao>()
+  const lotes = new Map<string, Lote[]>()
+  for (const [chave, st] of estados) {
+    posicoes.set(chave, st.posicao)
+    lotes.set(chave, st.lotes)
+  }
+  return { posicoes, custoSaidas, custoTransferencias, extratos, lotes }
+}
+
+/**
+ * Custo de tirar `pontos` de uma lista de lotes restantes, do mais antigo para
+ * o mais novo (prévia nos formulários). Lotes no formato [pontos, cmp].
+ * Devolve null se não houver pontos suficientes.
+ */
+export function previaPeps(lotes: [number, number][], pontos: number): { custo: number; cmp: number } | null {
+  let falta = pontos
+  let custo = 0
+  for (const [restantes, cmp] of lotes) {
+    if (falta <= 0) break
+    const usa = Math.min(falta, restantes)
+    custo += (cmp * usa) / 1000
+    falta -= usa
+  }
+  if (falta > 0 || pontos <= 0) return null
+  return { custo, cmp: (custo / pontos) * 1000 }
+}
+
+/**
+ * CMP recente: quanto custou cada milheiro que ENTROU num período (compras,
+ * acúmulos, bônus e transferências recebidas). Mostra o custo de gerar pontos
+ * agora, independente do que ainda está guardado. Saldo inicial e ajustes não
+ * entram, porque não são aquisições do período.
+ */
+export function calcularCmpRecente(
+  movs: Movimentos,
+  carteira: Carteira,
+  desde: Date,
+  ate: Date,
+): Map<string, { pontos: number; custo: number; cmp: number | null }> {
+  const total = new Map<string, { pontos: number; custo: number; cmp: number | null }>()
+  const somar = (chave: string, pontos: number, custo: number) => {
+    const t = total.get(chave) ?? { pontos: 0, custo: 0, cmp: null }
+    t.pontos += pontos
+    t.custo += custo
+    t.cmp = t.pontos > 0 ? (t.custo / t.pontos) * 1000 : null
+    total.set(chave, t)
+  }
+  const dentro = (d: Date) => d.getTime() >= desde.getTime() && d.getTime() <= ate.getTime()
+  for (const e of movs.entradas) {
+    if (e.pontos <= 0 || !dentro(e.data) || e.categoria === 'SALDO_INICIAL' || e.categoria === 'AJUSTE') continue
+    somar(chavePosicao(e.titularId, e.programaId), e.pontos, e.valor)
+  }
+  for (const t of movs.transferencias) {
+    if (t.pontosDestino <= 0 || !dentro(t.data)) continue
+    somar(chavePosicao(t.titularId, t.destinoId), t.pontosDestino, carteira.custoTransferencias.get(t.id)?.custo ?? 0)
+  }
+  return total
 }
 
 /**

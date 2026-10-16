@@ -1,6 +1,6 @@
 import 'server-only'
 import { db } from './db'
-import { calcularCarteira, chavePosicao, conferirSaldos, type Movimentos } from './carteira'
+import { calcularCarteira, calcularCmpRecente, chavePosicao, conferirSaldos, type Movimentos } from './carteira'
 import { formatarData, formatarPontos } from './formatos'
 import type { ItemCaixa } from './fluxo'
 
@@ -12,7 +12,7 @@ import type { ItemCaixa } from './fluxo'
 export async function carregarMovimentos(): Promise<Movimentos> {
   const [entradas, transferencias, saidas] = await Promise.all([
     db.entrada.findMany({
-      select: { id: true, data: true, titularId: true, programaId: true, pontos: true, valor: true, criadoEm: true },
+      select: { id: true, data: true, titularId: true, programaId: true, pontos: true, valor: true, categoria: true, criadoEm: true },
     }),
     db.transferencia.findMany({
       select: {
@@ -137,10 +137,34 @@ export async function listasLancamento(manter: { titulares?: string[]; programas
   return { titulares, programas, cartoes }
 }
 
-/** Saldo e CMP atuais de cada pessoa em cada programa, para mostrar nos formulários. */
-export async function saldosParaFormulario(): Promise<Record<string, { pontos: number; cmp: number | null }>> {
+export type SaldoFormulario = {
+  pontos: number
+  cmp: number | null
+  /** Lotes com pontos disponíveis, do mais antigo para o mais novo: [pontos, cmp]. */
+  lotes: [number, number][]
+}
+
+/** Saldo, CMP e lotes de cada pessoa em cada programa, para as prévias dos formulários. */
+export async function saldosParaFormulario(): Promise<Record<string, SaldoFormulario>> {
   const carteira = await carregarCarteira()
-  const saida: Record<string, { pontos: number; cmp: number | null }> = {}
-  for (const [chave, p] of carteira.posicoes) saida[chave] = { pontos: p.pontos, cmp: p.cmp }
+  const saida: Record<string, SaldoFormulario> = {}
+  for (const [chave, p] of carteira.posicoes) {
+    const lotes = (carteira.lotes.get(chave) ?? [])
+      .filter((l) => l.restantes > 0)
+      .map((l): [number, number] => [l.restantes, Math.round(l.cmp * 100) / 100])
+    saida[chave] = { pontos: p.pontos, cmp: p.cmp, lotes }
+  }
   return saida
+}
+
+/** Períodos aceitos para o CMP recente, em dias. */
+export const PERIODOS_CMP_RECENTE = [30, 90, 180, 365] as const
+
+/** Carteira + CMP recente dos últimos `dias` (até hoje). */
+export async function carregarCarteiraComRecente(dias: number) {
+  const movs = await carregarMovimentos()
+  const carteira = calcularCarteira(movs)
+  const ate = new Date()
+  const desde = new Date(Date.UTC(ate.getUTCFullYear(), ate.getUTCMonth(), ate.getUTCDate() - dias))
+  return { carteira, recente: calcularCmpRecente(movs, carteira, desde, ate), desde }
 }

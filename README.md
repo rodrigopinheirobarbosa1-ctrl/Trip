@@ -14,6 +14,7 @@ acessam ao mesmo tempo, cada uma com o seu login.
 | E\|S Financeiras | **Entradas e saídas avulsas** |
 | Fluxo de Caixa | **Fluxo de caixa** — mês a mês, com as parcelas |
 | Dashboard / Resumo | **Painel** — todas as pessoas juntas ou uma de cada vez |
+| — | **Lotes** — cada compra/bônus/transferência com o seu custo e o que resta dela |
 | — | **Extrato** — cada movimento com o saldo e o CMP logo depois |
 | — | **Pendências** — saldos negativos e vendas sem valor |
 | — | **Histórico** — quem lançou/alterou o quê e quando |
@@ -22,11 +23,14 @@ Os simuladores (Bumerangue e CI) ficaram de fora desta versão.
 
 ### Diferenças importantes em relação à planilha
 
-- **O CMP é calculado sozinho**, pelo custo médio ponderado, em ordem de data.
+- **O CMP é calculado sozinho**, pelo método **PEPS** (primeiro que entra, primeiro que sai).
+  Cada compra, bônus ou transferência recebida vira um **lote** com o seu custo, e cada
+  venda usa primeiro os lotes mais antigos. Uma promoção barata e uma compra cara não se
+  misturam numa média. A tela **Lotes** mostra cada lote e quanto ainda resta dele.
   Na planilha o "CMP na Operação" das vendas era digitado à mão (uma venda de
   336 mil Smiles estava com CMP R$ 0,00 e aparecia como R$ 5.040 de lucro).
-- **O CMP considera só os pontos que ainda estão na conta.** Na planilha ele era
-  a média de tudo o que já entrou, inclusive o que já foi vendido.
+- **CMP recente**: o painel mostra quanto custou cada milheiro que entrou nos últimos
+  30, 90, 180 ou 365 dias — a referência para decidir o preço de venda.
 - **Não dá para gastar pontos que não existem.** Uma venda ou transferência
   maior que o saldo (na data dela) é recusada com uma mensagem explicando.
 - **Sem limite de linhas.** As fórmulas da planilha só liam até a linha ~1000.
@@ -77,7 +81,7 @@ Ajuste o endereço do banco no arquivo `.env` (o modelo está em `.env.example`)
 
 ### Onde fica cada coisa
 
-- `src/lib/carteira.ts` — saldos e CMP (custo médio ponderado)
+- `src/lib/carteira.ts` — saldos, lotes e CMP (método PEPS) e CMP recente
 - `src/lib/fluxo.ts` — fluxo de caixa mensal
 - `src/lib/importacao/planilha.ts` — leitura da planilha
 - `prisma/schema.prisma` — tabelas do banco
