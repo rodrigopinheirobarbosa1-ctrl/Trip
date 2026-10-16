@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+build/
+*.log
+.env
+.env.local
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
+test-results/
+.vercel
+
+# Planilhas com dados reais nunca vão para o GitHub
+*.xlsx
+*.xls
+*.csv

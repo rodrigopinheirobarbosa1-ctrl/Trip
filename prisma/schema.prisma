@@ -1,0 +1,274 @@
+// =============================================================================
+// Trip - Controle de milhas e pontos
+// Modelo de dados
+//
+// Principios:
+//  - Valores em dinheiro sao inteiros em CENTAVOS (sem erro de arredondamento).
+//  - Pontos sao inteiros.
+//  - O custo dos pontos (CMP) NAO e' gravado: e' recalculado a partir dos
+//    lancamentos, em ordem de data, pelo metodo do custo medio ponderado.
+//    Assim, corrigir um lancamento antigo corrige automaticamente tudo o que
+//    veio depois (transferencias, vendas e lucro).
+//  - Uma venda/emissao e' lancada UMA vez: ela baixa os pontos e gera o
+//    resultado financeiro. Na planilha era preciso lancar duas vezes.
+//  - Senhas dos programas de fidelidade NAO sao guardadas aqui.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Endereco sem "pooler", usado so' para criar/alterar tabelas. Na Vercel
+  // com Neon ele vem pronto na variavel DATABASE_URL_UNPOOLED.
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// ----------------------------------------------------------------------------
+// USUARIOS / SESSAO / AUDITORIA
+// ----------------------------------------------------------------------------
+
+enum Papel {
+  ADMIN // cadastra usuarios, importa a planilha e ve a auditoria
+  OPERADOR // faz lancamentos e cadastros
+}
+
+model Usuario {
+  id           String    @id @default(cuid())
+  nome         String
+  email        String    @unique
+  senhaHash    String
+  papel        Papel     @default(OPERADOR)
+  ativo        Boolean   @default(true)
+  ultimoAcesso DateTime?
+  criadoEm     DateTime  @default(now())
+  sessoes      Sessao[]
+}
+
+model Sessao {
+  id        String   @id
+  usuarioId String
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  expiraEm  DateTime
+  ip        String?
+  criadoEm  DateTime @default(now())
+
+  @@index([usuarioId])
+}
+
+model Auditoria {
+  id          String   @id @default(cuid())
+  usuarioId   String?
+  usuarioNome String
+  acao        String // CRIAR, ALTERAR, EXCLUIR, LOGIN, IMPORTAR...
+  entidade    String
+  entidadeId  String?
+  resumo      String
+  criadoEm    DateTime @default(now())
+
+  @@index([criadoEm])
+}
+
+// ----------------------------------------------------------------------------
+// CADASTROS
+// ----------------------------------------------------------------------------
+
+/// Pessoa dona das contas nos programas (na planilha: "CPF").
+model Titular {
+  id                String                @id @default(cuid())
+  nome              String                @unique
+  cpf               String?
+  /// Dinheiro em caixa desta pessoa no inicio do controle (centavos).
+  saldoInicialCaixa Int                   @default(0)
+  ativo             Boolean               @default(true)
+  observacao        String?
+  criadoEm          DateTime              @default(now())
+  contas            ContaPrograma[]
+  entradas          Entrada[]
+  transferencias    Transferencia[]
+  saidas            Saida[]
+  movimentos        MovimentoFinanceiro[]
+}
+
+enum TipoPrograma {
+  CARTAO_CREDITO
+  CIA_AEREA
+  HOTEL
+  ABASTECIMENTO
+  OUTRO
+}
+
+model Programa {
+  id                 String          @id @default(cuid())
+  nome               String          @unique
+  tipo               TipoPrograma    @default(OUTRO)
+  /// Preco de referencia de venda do milheiro (centavos), usado para estimar
+  /// quanto vale o saldo. Opcional.
+  valorMilheiro      Int?
+  ativo              Boolean         @default(true)
+  criadoEm           DateTime        @default(now())
+  contas             ContaPrograma[]
+  entradas           Entrada[]
+  saidas             Saida[]
+  transferenciasDe   Transferencia[] @relation("origem")
+  transferenciasPara Transferencia[] @relation("destino")
+}
+
+/// Login de um titular num programa. A senha fica fora do sistema.
+model ContaPrograma {
+  id         String   @id @default(cuid())
+  titularId  String
+  titular    Titular  @relation(fields: [titularId], references: [id], onDelete: Cascade)
+  programaId String
+  programa   Programa @relation(fields: [programaId], references: [id], onDelete: Cascade)
+  login      String
+  observacao String?
+
+  @@unique([titularId, programaId])
+}
+
+model Cartao {
+  id       String    @id @default(cuid())
+  nome     String    @unique
+  final    String?
+  ativo    Boolean   @default(true)
+  entradas Entrada[]
+}
+
+// ----------------------------------------------------------------------------
+// LANCAMENTOS DE PONTOS
+// ----------------------------------------------------------------------------
+
+enum CategoriaEntrada {
+  COMPRA // compra de pontos/milhas
+  ACUMULO // acumulo em compras, voos, cartao
+  BONUS // bonus (anuidade, promocao)
+  SALDO_INICIAL // saldo trazido de antes do controle
+  AJUSTE // correcao manual (aceita pontos negativos)
+}
+
+enum FormaPagamento {
+  PIX
+  CARTAO
+  BOLETO
+  DINHEIRO
+  OUTRO
+  SEM_DESEMBOLSO // nao sai dinheiro do caixa (bonus, saldo inicial...)
+}
+
+/// Pontos que entram: compras, acumulos, bonus. (Planilha: "Lança Entrada Ptos")
+model Entrada {
+  id             String           @id @default(cuid())
+  data           DateTime         @db.Date
+  titularId      String
+  titular        Titular          @relation(fields: [titularId], references: [id], onDelete: Restrict)
+  programaId     String
+  programa       Programa         @relation(fields: [programaId], references: [id], onDelete: Restrict)
+  categoria      CategoriaEntrada @default(COMPRA)
+  pontos         Int
+  /// Quanto custou (centavos).
+  valor          Int              @default(0)
+  formaPagamento FormaPagamento   @default(PIX)
+  parcelas       Int              @default(1)
+  cartaoId       String?
+  cartao         Cartao?          @relation(fields: [cartaoId], references: [id], onDelete: SetNull)
+  observacao     String?
+  criadoPor      String?
+  criadoEm       DateTime         @default(now())
+  atualizadoEm   DateTime         @updatedAt
+
+  @@index([data])
+  @@index([titularId, programaId])
+}
+
+/// Transferencia entre programas do mesmo titular, com bonus ou desagio.
+/// (Planilha: "Lança Transf Ptos")
+model Transferencia {
+  id              String   @id @default(cuid())
+  data            DateTime @db.Date
+  titularId       String
+  titular         Titular  @relation(fields: [titularId], references: [id], onDelete: Restrict)
+  origemId        String
+  origem          Programa @relation("origem", fields: [origemId], references: [id], onDelete: Restrict)
+  destinoId       String
+  destino         Programa @relation("destino", fields: [destinoId], references: [id], onDelete: Restrict)
+  /// Pontos que saem da origem.
+  pontos          Int
+  /// Bonus em % (90 = 90%). Negativo para desagio.
+  bonusPercentual Float    @default(0)
+  /// Pontos que chegam no destino (pontos + bonus).
+  pontosDestino   Int
+  observacao      String?
+  criadoPor       String?
+  criadoEm        DateTime @default(now())
+  atualizadoEm    DateTime @updatedAt
+
+  @@index([data])
+}
+
+enum TipoSaida {
+  VENDA // emissao/venda para cliente
+  USO_PESSOAL // emissao para uso proprio
+  OUTRO // expiracao, ajuste, perda
+}
+
+/// Pontos que saem: emissoes, vendas, uso pessoal.
+/// (Planilha: "Lança Saída Ptos" + "Controle de Venda", agora num lugar so')
+model Saida {
+  id               String          @id @default(cuid())
+  data             DateTime        @db.Date
+  titularId        String
+  titular          Titular         @relation(fields: [titularId], references: [id], onDelete: Restrict)
+  programaId       String
+  programa         Programa        @relation(fields: [programaId], references: [id], onDelete: Restrict)
+  tipo             TipoSaida       @default(VENDA)
+  pontos           Int
+  taxaEmbarque     Int             @default(0)
+  valorVenda       Int             @default(0)
+  fornecedor       String?
+  cliente          String?
+  localizador      String?
+  dataIda          DateTime?       @db.Date
+  dataVolta        DateTime?       @db.Date
+  passageiros      Int?
+  origem           String?
+  destino          String?
+  formaRecebimento FormaPagamento?
+  parcelas         Int             @default(1)
+  dataRecebimento  DateTime?       @db.Date
+  observacao       String?
+  criadoPor        String?
+  criadoEm         DateTime        @default(now())
+  atualizadoEm     DateTime        @updatedAt
+
+  @@index([data])
+  @@index([titularId, programaId])
+}
+
+// ----------------------------------------------------------------------------
+// FINANCEIRO
+// ----------------------------------------------------------------------------
+
+enum TipoMovimento {
+  ENTRADA
+  SAIDA
+}
+
+/// Dinheiro que entra ou sai do caixa sem ser compra/venda de pontos.
+/// (Planilha: "E|S Financeiras")
+model MovimentoFinanceiro {
+  id           String        @id @default(cuid())
+  data         DateTime      @db.Date
+  titularId    String?
+  titular      Titular?      @relation(fields: [titularId], references: [id], onDelete: SetNull)
+  tipo         TipoMovimento
+  valor        Int
+  descricao    String
+  criadoPor    String?
+  criadoEm     DateTime      @default(now())
+  atualizadoEm DateTime      @updatedAt
+
+  @@index([data])
+}
