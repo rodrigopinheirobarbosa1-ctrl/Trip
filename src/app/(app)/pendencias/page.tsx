@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/link'
 import { listarPendencias } from '@/lib/pendencias'
 import { Cabecalho, Cartao, Etiqueta, Vazio } from '@/components/ui'
 

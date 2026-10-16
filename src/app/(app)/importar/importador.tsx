@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import Link from 'next/link'
+import Link from '@/components/link'
 import { readSheet } from 'read-excel-file/browser'
 import { lerPlanilha, type DadosImportacao, type Linhas } from '@/lib/importacao/planilha'
 import { formatarPontos } from '@/lib/formatos'
