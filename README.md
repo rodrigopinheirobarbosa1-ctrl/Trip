@@ -14,6 +14,7 @@ acessam ao mesmo tempo, cada uma com o seu login.
 | E\|S Financeiras | **Entradas e saídas avulsas** |
 | Fluxo de Caixa | **Fluxo de caixa** — mês a mês, com as parcelas |
 | Dashboard / Resumo | **Painel** — todas as pessoas juntas ou uma de cada vez |
+| — | **Importar extrato** — a IA lê os prints/PDF/Word do extrato de um programa; você confere e grava |
 | — | **Lotes** — cada compra/bônus/transferência com o seu custo e o que resta dela |
 | — | **Extrato** — cada movimento com o saldo e o CMP logo depois |
 | — | **Pendências** — saldos negativos e vendas sem valor |
@@ -62,6 +63,19 @@ O primeiro acesso (banco vazio) abre a tela de criação do administrador.
 8. Em **Usuários**, cadastre as outras pessoas da equipe e passe a elas o
    endereço do site, o e-mail e a senha inicial.
 
+### Ligar a leitura automática de extratos (IA)
+
+A tela **Importar extrato** usa o Claude, da Anthropic, para ler os prints. É cobrado por uso:
+cada página de extrato custa poucos centavos.
+
+1. Entre em <https://console.anthropic.com> e crie uma conta.
+2. Em **Billing** (Cobrança), adicione créditos (o mínimo é cerca de US$ 5 e dura muito tempo).
+3. Em **API Keys**, clique em **Create Key**, dê o nome `trip` e copie a chave (começa com `sk-ant-`).
+   Ela só aparece uma vez.
+4. Na Vercel, abra o projeto → **Settings** → **Environment Variables** → **Add**:
+   nome `ANTHROPIC_API_KEY`, valor = a chave copiada, ambientes **Production** e **Preview** → **Save**.
+5. Em **Deployments**, no último deploy: **⋯ → Redeploy**.
+
 Toda alteração enviada ao GitHub (branch principal) é publicada sozinha pela Vercel.
 
 ---
@@ -84,5 +98,6 @@ Ajuste o endereço do banco no arquivo `.env` (o modelo está em `.env.example`)
 - `src/lib/carteira.ts` — saldos, lotes e CMP (método PEPS) e CMP recente
 - `src/lib/fluxo.ts` — fluxo de caixa mensal
 - `src/lib/importacao/planilha.ts` — leitura da planilha
+- `src/lib/extrato/` — leitura de extratos com IA e sugestão de cada linha
 - `prisma/schema.prisma` — tabelas do banco
 - `src/app/(app)/…` — as telas

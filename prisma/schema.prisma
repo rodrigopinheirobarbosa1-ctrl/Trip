@@ -272,3 +272,25 @@ model MovimentoFinanceiro {
 
   @@index([data])
 }
+
+// ----------------------------------------------------------------------------
+// IMPORTACAO DE EXTRATOS
+// ----------------------------------------------------------------------------
+
+/// Como a pessoa classificou um tipo de linha do extrato de um programa, para
+/// sugerir igual da próxima vez (ex.: "Acúmulo · Clube Livelo" = compra a
+/// R$ 30 o milheiro; "Resgate · Smiles" = transferência para a Smiles).
+model RegraExtrato {
+  id              String   @id @default(cuid())
+  programaId      String
+  /// Operação + descrição da linha, normalizadas (sem acento, minúsculas).
+  chave           String
+  acao            String
+  outroProgramaId String?
+  /// Custo por milheiro (centavos) usado nas compras desta linha.
+  valorMilheiro   Int?
+  bonusPercentual Float?
+  atualizadoEm    DateTime @updatedAt
+
+  @@unique([programaId, chave])
+}
