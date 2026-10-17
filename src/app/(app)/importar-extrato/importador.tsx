@@ -68,6 +68,8 @@ export function ImportadorExtrato({
   const [desde, setDesde] = useState('')
   const [progresso, setProgresso] = useState<{ feitas: number; total: number } | null>(null)
   const [erros, setErros] = useState<string[]>([])
+  /** Arquivos lidos sem IA (PDF da Smiles): sem custo. */
+  const [semIa, setSemIa] = useState<string[]>([])
   const [conferencia, setConferencia] = useState<Conferencia | null>(null)
   const [saldoExtrato, setSaldoExtrato] = useState<number | null>(null)
   /** O campo do saldo, editável: a pessoa pode digitar se a leitura não achou. */
@@ -89,6 +91,7 @@ export function ImportadorExtrato({
 
   async function ler(arquivos: File[]) {
     setErros([])
+    setSemIa([])
     setResultado(null)
     setConferencia(null)
     setLinhas([])
@@ -116,6 +119,7 @@ export function ImportadorExtrato({
           if (r.ok) {
             lidas[n] = r.linhas
             saldos[n] = r.saldoExibido
+            if (r.semIa) setSemIa((x) => [...x, paginas[n].nome])
           } else falhas.push(`${paginas[n].nome}: ${r.erro}`)
         } catch {
           falhas.push(`${paginas[n].nome}: falha de conexão ao ler.`)
@@ -252,17 +256,16 @@ export function ImportadorExtrato({
     })
   }
 
-  if (!iaConfigurada) {
-    return (
-      <Aviso tom="amarelo">
-        A leitura automática ainda não está ligada. O administrador precisa cadastrar a chave da IA
-        (<strong>ANTHROPIC_API_KEY</strong>) nas configurações da Vercel — o passo a passo está no README do projeto.
-      </Aviso>
-    )
-  }
 
   return (
     <div className="space-y-4">
+      {!iaConfigurada && (
+        <Aviso tom="amarelo">
+          A leitura com IA ainda não está ligada: por enquanto só o <strong>PDF do extrato da Smiles</strong> pode ser lido. Para os
+          prints e os outros programas, o administrador precisa cadastrar a chave da IA (<strong>ANTHROPIC_API_KEY</strong>) nas
+          configurações da Vercel — o passo a passo está no README do projeto.
+        </Aviso>
+      )}
       {!conferencia && (
         <div className="cartao space-y-4 p-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -324,6 +327,13 @@ export function ImportadorExtrato({
             </div>
           )}
         </div>
+      )}
+
+      {semIa.length > 0 && (
+        <Aviso tom="verde">
+          {semIa.join(', ')}: extrato da Smiles lido <strong>sem usar a IA</strong> (sem custo). O PDF não traz o saldo: digite o
+          saldo atual de milhas no campo &quot;Saldo mostrado no extrato&quot;.
+        </Aviso>
       )}
 
       {erros.length > 0 && (

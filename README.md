@@ -14,7 +14,7 @@ acessam ao mesmo tempo, cada uma com o seu login.
 | E\|S Financeiras | **Entradas e saídas avulsas** |
 | Fluxo de Caixa | **Fluxo de caixa** — mês a mês, com as parcelas |
 | Dashboard / Resumo | **Painel** — todas as pessoas juntas ou uma de cada vez |
-| — | **Importar extrato** — a IA lê os prints/PDF/Word do extrato de um programa; você confere e grava |
+| — | **Importar extrato** — a IA lê os prints/PDF/Word do extrato de um programa; você confere e grava. O PDF do extrato da Smiles é lido sem IA (sem custo) |
 | — | **Lotes** — cada compra/bônus/transferência com o seu custo e o que resta dela |
 | — | **Extrato** — cada movimento com o saldo e o CMP logo depois |
 | — | **Pendências** — saldos negativos e vendas sem valor |
