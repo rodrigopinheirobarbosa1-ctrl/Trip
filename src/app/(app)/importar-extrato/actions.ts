@@ -61,6 +61,8 @@ export type Conferencia = {
   /** Saldo do sistema no dia anterior à primeira linha do extrato. */
   saldoAntesDoPeriodo: number
   foraDoExtrato: ForaDoExtrato[]
+  /** Custo atribuído padrão do programa aos pontos de parceiros (centavos por milheiro). */
+  custoParceiroMilheiro: number | null
 }
 
 /** Junta as páginas lidas e sugere o que fazer com cada linha. */
@@ -74,7 +76,7 @@ export async function montarConferencia(entrada: {
   const linhas = juntarPaginas(entrada.paginas)
 
   const [programas, regras, entradas, enviadas, recebidas, saidas, movimentos] = await Promise.all([
-    db.programa.findMany({ orderBy: { nome: 'asc' }, select: { id: true, nome: true } }),
+    db.programa.findMany({ orderBy: { nome: 'asc' }, select: { id: true, nome: true, custoParceiroMilheiro: true } }),
     db.regraExtrato.findMany({ where: { programaId } }),
     db.entrada.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true, categoria: true, observacao: true } }),
     db.transferencia.findMany({
@@ -132,6 +134,7 @@ export async function montarConferencia(entrada: {
     temLancamentoAntes: antes(entradas) || antes(enviadas) || antes(recebidas) || antes(saidas),
     saldoAntesDoPeriodo: antesDoPeriodo.posicoes.get(chave)?.pontos ?? 0,
     foraDoExtrato,
+    custoParceiroMilheiro: programas.find((p) => p.id === programaId)?.custoParceiroMilheiro ?? null,
   }
 }
 
@@ -216,6 +219,7 @@ export async function gravarExtrato(entrada: {
         break
       case 'COMPRA':
       case 'ACUMULO':
+      case 'PARCEIRO':
       case 'BONUS': {
         if (!entra) return { erro: `Linha de ${i.linha.data} (${observacao(i)}) é de saída e não pode ser entrada.` }
         const paga = i.acao === 'COMPRA' && i.valor > 0
@@ -225,7 +229,8 @@ export async function gravarExtrato(entrada: {
           programaId,
           categoria: i.acao,
           pontos: pts,
-          valor: i.acao === 'COMPRA' ? i.valor : 0,
+          // Parceiro: custo atribuído (sem desembolso); vazio usa o padrão do programa.
+          valor: i.acao === 'COMPRA' || i.acao === 'PARCEIRO' ? i.valor : 0,
           formaPagamento: paga ? i.formaPagamento : 'SEM_DESEMBOLSO',
           parcelas: paga ? i.parcelas : 1,
           observacao: observacao(i),
@@ -427,7 +432,7 @@ export async function gravarExtrato(entrada: {
         acao: i.acao,
         outroProgramaId: i.outroProgramaId,
         valorMilheiro:
-          i.acao === 'COMPRA' && i.valor > 0
+          (i.acao === 'COMPRA' || i.acao === 'PARCEIRO') && i.valor > 0
             ? Math.round((i.valor / pts) * 1000)
             : i.acao === 'TRANSF_IMEDIATA' && i.valor > 0 && i.pontosComprados > 0
               ? Math.round((i.valor / i.pontosComprados) * 1000)

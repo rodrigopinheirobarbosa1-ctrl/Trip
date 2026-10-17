@@ -34,6 +34,11 @@ Os simuladores (Bumerangue e CI) ficaram de fora desta versão.
   completar a transferência saem primeiro, e o destino recebe o custo real da operação. Na
   importação do extrato, a linha vira compra + transferência; à mão, marque a caixinha
   "Transferência imediata" na transferência (lançando a compra antes, em Entradas).
+- **Custo atribuído aos pontos de parceiros**: pontos ganhos em compras de parceiros (Uber,
+  Amazon, Insider...) entram como "Acúmulo em parceiro" e recebem o custo por milheiro
+  cadastrado no programa (ou um valor próprio no lançamento). Não sai do caixa. Pontos do
+  cartão e bônus do próprio programa ficam sem custo. Em **Entradas → Classificar acúmulos**
+  dá para reclassificar em grupo o que já está lançado.
 - **CMP recente**: o painel mostra quanto custou cada milheiro que entrou nos últimos
   30, 90, 180 ou 365 dias — a referência para decidir o preço de venda.
 - **Não dá para gastar pontos que não existem.** Uma venda ou transferência

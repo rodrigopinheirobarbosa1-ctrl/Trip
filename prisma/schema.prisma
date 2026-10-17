@@ -101,19 +101,22 @@ enum TipoPrograma {
 }
 
 model Programa {
-  id                 String          @id @default(cuid())
-  nome               String          @unique
-  tipo               TipoPrograma    @default(OUTRO)
+  id                    String          @id @default(cuid())
+  nome                  String          @unique
+  tipo                  TipoPrograma    @default(OUTRO)
   /// Preco de referencia de venda do milheiro (centavos), usado para estimar
   /// quanto vale o saldo. Opcional.
-  valorMilheiro      Int?
-  ativo              Boolean         @default(true)
-  criadoEm           DateTime        @default(now())
-  contas             ContaPrograma[]
-  entradas           Entrada[]
-  saidas             Saida[]
-  transferenciasDe   Transferencia[] @relation("origem")
-  transferenciasPara Transferencia[] @relation("destino")
+  valorMilheiro         Int?
+  /// Custo atribuido por milheiro (centavos) aos pontos de parceiros de produto
+  /// (categoria PARCEIRO) lancados sem valor proprio. Nao sai do caixa.
+  custoParceiroMilheiro Int?
+  ativo                 Boolean         @default(true)
+  criadoEm              DateTime        @default(now())
+  contas                ContaPrograma[]
+  entradas              Entrada[]
+  saidas                Saida[]
+  transferenciasDe      Transferencia[] @relation("origem")
+  transferenciasPara    Transferencia[] @relation("destino")
 }
 
 /// Login de um titular num programa. A senha fica fora do sistema.
@@ -143,8 +146,9 @@ model Cartao {
 
 enum CategoriaEntrada {
   COMPRA // compra de pontos/milhas
-  ACUMULO // acumulo em compras, voos, cartao
-  BONUS // bonus (anuidade, promocao)
+  ACUMULO // acumulo no cartao, voos (sem custo)
+  BONUS // bonus do proprio programa (anuidade, clube, promocao): sem custo
+  PARCEIRO // acumulo em parceiro de produto: custo atribuido, sem desembolso
   SALDO_INICIAL // saldo trazido de antes do controle
   AJUSTE // correcao manual (aceita pontos negativos)
 }

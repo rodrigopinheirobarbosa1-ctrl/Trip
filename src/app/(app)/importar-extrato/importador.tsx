@@ -43,7 +43,10 @@ function linhaInicial(s: Sugestao): Linha {
     incluir: !s.jaLancado && !s.corrigirBonus && !s.parteDe && s.acao !== 'IGNORAR',
     acao: s.acao,
     outroProgramaId: s.outroProgramaId ?? '',
-    valor: s.acao === 'COMPRA' && s.valorMilheiro ? centavosParaTexto(Math.round((s.valorMilheiro * pts) / 1000)) : '',
+    valor:
+      (s.acao === 'COMPRA' || s.acao === 'PARCEIRO') && s.valorMilheiro
+        ? centavosParaTexto(Math.round((s.valorMilheiro * pts) / 1000))
+        : '',
     formaPagamento: 'CARTAO',
     parcelas: '1',
     bonus: s.bonusPercentual !== null ? String(s.bonusPercentual).replace('.', ',') : '0',
@@ -655,6 +658,24 @@ export function ImportadorExtrato({
                         </select>
                       </td>
                       <td className="px-3 py-2">
+                        {l.incluir && l.acao === 'PARCEIRO' && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              value={l.valor}
+                              onChange={(e) => alterar(i, { valor: e.target.value })}
+                              placeholder="Custo R$ (opcional)"
+                              inputMode="decimal"
+                              className="campo w-36 py-1 text-xs"
+                            />
+                            <span className="w-full text-xs text-slate-500">
+                              {valor
+                                ? `Custo atribuído: ${formatarCmp((valor / pts) * 1000)} o milheiro (não sai do caixa).`
+                                : conferencia.custoParceiroMilheiro
+                                  ? `Vazio: usa o padrão do programa, ${formatarCmp(conferencia.custoParceiroMilheiro)} o milheiro (não sai do caixa).`
+                                  : 'Sem custo padrão para parceiros neste programa (cadastre em Programas) — informe o custo ou fica zero.'}
+                            </span>
+                          </div>
+                        )}
                         {l.incluir && l.acao === 'COMPRA' && (
                           <div className="flex flex-wrap items-center gap-2">
                             <input

@@ -7,6 +7,7 @@ import { lerCentavos, lerPontos, formatarReais } from '@/lib/formatos'
 import { CATEGORIAS_ENTRADA, FORMAS_PAGAMENTO, opcoes } from '@/lib/rotulos'
 
 type Item = { id: string; nome: string }
+type ItemPrograma = Item & { custoParceiroMilheiro?: number | null }
 
 export type ValoresEntrada = {
   data: string
@@ -32,10 +33,14 @@ export function FormularioEntrada({
   acao: (estado: EstadoForm, dados: FormData) => Promise<EstadoForm>
   valores: ValoresEntrada
   titulares: Item[]
-  programas: Item[]
+  programas: ItemPrograma[]
   cartoes: Item[]
   novo: boolean
 }) {
+  const [categoria, setCategoria] = useState(valores.categoria)
+  const [programaId, setProgramaId] = useState(valores.programaId)
+  const parceiro = categoria === 'PARCEIRO'
+  const padrao = programas.find((x) => x.id === programaId)?.custoParceiroMilheiro ?? null
   const [pontos, setPontos] = useState(valores.pontos)
   const [valor, setValor] = useState(valores.valor)
   const [forma, setForma] = useState(valores.formaPagamento === 'SEM_DESEMBOLSO' ? 'PIX' : valores.formaPagamento)
@@ -46,7 +51,8 @@ export function FormularioEntrada({
   const v = lerCentavos(valor)
   const cmp = p && p > 0 && v !== null ? (v / p) * 1000 : null
   const n = Number(parcelas) || 1
-  const semDinheiro = !v
+  const semDinheiro = !v || parceiro
+  const custoPadrao = parceiro && !v && padrao && p && p > 0 ? Math.round((p * padrao) / 1000) : null
 
   return (
     <Formulario action={acao} className="space-y-4">
@@ -65,7 +71,7 @@ export function FormularioEntrada({
           </select>
         </Campo>
         <Campo rotulo="Programa">
-          <select name="programaId" defaultValue={valores.programaId} required className="campo">
+          <select name="programaId" value={programaId} onChange={(e) => setProgramaId(e.target.value)} required className="campo">
             <option value="">Selecione</option>
             {programas.map((t) => (
               <option key={t.id} value={t.id}>
@@ -78,7 +84,7 @@ export function FormularioEntrada({
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Campo rotulo="Tipo de entrada">
-          <select name="categoria" defaultValue={valores.categoria} className="campo">
+          <select name="categoria" value={categoria} onChange={(e) => setCategoria(e.target.value)} className="campo">
             {opcoes(CATEGORIAS_ENTRADA).map((o) => (
               <option key={o.valor} value={o.valor}>
                 {o.texto}
@@ -97,7 +103,20 @@ export function FormularioEntrada({
             className="campo"
           />
         </Campo>
-        <Campo rotulo="Valor pago (R$)" dica={cmp !== null ? `Custo do milheiro: ${formatarReais(cmp)}` : 'Deixe vazio se não pagou nada.'}>
+        <Campo
+          rotulo={parceiro ? 'Custo atribuído (R$)' : 'Valor pago (R$)'}
+          dica={
+            parceiro
+              ? cmp !== null
+                ? `Custo do milheiro: ${formatarReais(cmp)}. Não sai do caixa.`
+                : padrao
+                  ? `Vazio: usa o padrão do programa (${formatarReais(padrao)} o milheiro)${custoPadrao !== null ? ` = ${formatarReais(custoPadrao)}` : ''}. Não sai do caixa.`
+                  : 'Este programa não tem custo padrão para parceiros (cadastre em Programas) — ou informe o valor aqui.'
+              : cmp !== null
+                ? `Custo do milheiro: ${formatarReais(cmp)}`
+                : 'Deixe vazio se não pagou nada.'
+          }
+        >
           <input
             name="valor"
             value={valor}

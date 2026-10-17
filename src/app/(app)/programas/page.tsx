@@ -24,6 +24,7 @@ export default async function Programas() {
                   <Th>Programa</Th>
                   <Th>Tipo</Th>
                   <Th alinhar="direita">Preço de venda do milheiro</Th>
+                  <Th alinhar="direita">Custo atribuído (parceiros)</Th>
                   <Th />
                 </tr>
               </thead>
@@ -37,6 +38,7 @@ export default async function Programas() {
                     </Td>
                     <Td>{rotulo(TIPOS_PROGRAMA, p.tipo)}</Td>
                     <Td alinhar="direita">{p.valorMilheiro !== null ? formatarReais(p.valorMilheiro) : '-'}</Td>
+                    <Td alinhar="direita">{p.custoParceiroMilheiro !== null ? formatarReais(p.custoParceiroMilheiro) : '-'}</Td>
                     <Td>{!p.ativo && <Etiqueta>Inativo</Etiqueta>}</Td>
                   </tr>
                 ))}
@@ -55,6 +57,13 @@ export default async function Programas() {
               modo="decimal"
               placeholder="Ex.: 15,50"
               dica="Quanto se consegue vender 1.000 pontos hoje. Usado para estimar quanto vale o saldo."
+            />
+            <Texto
+              rotulo="Custo atribuído aos pontos de parceiros (R$ por milheiro, opcional)"
+              nome="custoParceiroMilheiro"
+              modo="decimal"
+              placeholder="Ex.: 31,00"
+              dica="Custo dos pontos ganhos em compras de parceiros (Uber, Amazon...). Não sai do caixa."
             />
             <BotaoEnviar>Cadastrar</BotaoEnviar>
           </Formulario>

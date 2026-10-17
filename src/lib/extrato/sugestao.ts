@@ -33,8 +33,9 @@ export type LinhaLida = {
 
 export const ACOES = {
   COMPRA: 'Entrada: compra',
-  ACUMULO: 'Entrada: acúmulo',
-  BONUS: 'Entrada: bônus',
+  ACUMULO: 'Entrada: acúmulo (cartão, voo: sem custo)',
+  BONUS: 'Entrada: bônus do programa (sem custo)',
+  PARCEIRO: 'Entrada: parceiro (custo atribuído)',
   TRANSF_RECEBIDA: 'Transferência recebida',
   TRANSF_ENVIADA: 'Transferência enviada',
   TRANSF_IMEDIATA: 'Transferência imediata (pontos + compra)',
@@ -45,7 +46,7 @@ export const ACOES = {
 } as const
 export type Acao = keyof typeof ACOES
 
-export const ACOES_ENTRADA: Acao[] = ['COMPRA', 'ACUMULO', 'BONUS', 'TRANSF_RECEBIDA', 'IGNORAR']
+export const ACOES_ENTRADA: Acao[] = ['COMPRA', 'ACUMULO', 'PARCEIRO', 'BONUS', 'TRANSF_RECEBIDA', 'IGNORAR']
 export const ACOES_SAIDA: Acao[] = ['TRANSF_ENVIADA', 'TRANSF_IMEDIATA', 'USO_PESSOAL', 'VENDA', 'OUTRA_SAIDA', 'IGNORAR']
 
 export type Regra = {
@@ -180,6 +181,10 @@ export function programaCitado(texto: string, programas: { id: string; nome: str
   return null
 }
 
+/** Textos de pontos que vêm da fatura do cartão de crédito (sem custo). */
+const CARTAO =
+  /cartao|fatura|membership rewards|\bamex\b|american express|itau|itaucard|santander|bradesco|\bcaixa\b|\bbanco\b|nubank|\bc6\b|\bbtg\b|\bxp\b|sicredi|sicoob|credicard|ourocard|porto seguro|\binter\b|\bsafra\b|\bdiners\b|\bvisa\b|mastercard|\belo\b|credito de pontos/
+
 /** Sugestão pelo texto da linha, quando não há regra aprendida. */
 export function sugerirPeloTexto(
   l: LinhaLida,
@@ -202,7 +207,10 @@ export function sugerirPeloTexto(
     if (/compra de (pontos|milhas)|comprar (pontos|milhas)|clube/.test(tudo)) {
       return { acao: 'COMPRA', outroProgramaId: null, motivo: 'compra ou clube de pontos' }
     }
-    return { acao: 'ACUMULO', outroProgramaId: null, motivo: 'pontos ganhos' }
+    // Fatura do cartão (sem custo) e voo: acúmulo. O resto vem de parceiro de produto.
+    if (CARTAO.test(tudo)) return { acao: 'ACUMULO', outroProgramaId: null, motivo: 'pontos do cartão de crédito' }
+    if (/\bvoo\b|\btrecho|\bvoar\b|booking|passagem/.test(tudo)) return { acao: 'ACUMULO', outroProgramaId: null, motivo: 'pontos de voo' }
+    return { acao: 'PARCEIRO', outroProgramaId: null, motivo: 'compra em parceiro (custo atribuído)' }
   }
   if (/expira|vencid|vencimento|estorno|cancelad/.test(tudo)) {
     return { acao: 'OUTRA_SAIDA', outroProgramaId: null, motivo: 'expiração ou estorno' }
