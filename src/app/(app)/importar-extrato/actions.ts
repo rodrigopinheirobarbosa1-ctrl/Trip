@@ -18,6 +18,7 @@ const TIPOS_ARQUIVO = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf
 /** Lê uma página (print ou PDF) do extrato. Chamada uma vez por arquivo. */
 export async function lerPagina(entrada: {
   programaId: string
+  desde?: string | null
   pagina: number
   dados: string
   tipo: string
@@ -29,7 +30,8 @@ export async function lerPagina(entrada: {
   if (entrada.dados.length > 4_000_000) return { ok: false, erro: `A página ${entrada.pagina} é grande demais. Divida o PDF.` }
   const programa = await db.programa.findUnique({ where: { id: entrada.programaId } })
   if (!programa) return { ok: false, erro: 'Programa não encontrado.' }
-  return lerPaginaDoExtrato({ pagina: entrada.pagina, dados: entrada.dados, tipo, programa: programa.nome })
+  const desde = entrada.desde && /^\d{4}-\d{2}-\d{2}$/.test(entrada.desde) ? entrada.desde : null
+  return lerPaginaDoExtrato({ pagina: entrada.pagina, dados: entrada.dados, tipo, programa: programa.nome, desde })
 }
 
 /** Lançamento que o sistema tem do início do extrato em diante, mas que o extrato não mostra. */
@@ -134,6 +136,7 @@ const Item = z.object({
     descricao: z.string().max(200),
     pontos: z.number().int().refine((n) => n !== 0),
     observacao: z.string().max(500).nullable(),
+    localizador: z.string().max(50).nullable().optional(),
     pagina: z.number().int(),
   }),
   chave: z.string().max(500),
@@ -290,6 +293,7 @@ export async function gravarExtrato(entrada: {
           valorVenda: i.acao === 'VENDA' ? i.valorVenda : 0,
           formaRecebimento: i.acao === 'VENDA' && i.valorVenda > 0 ? 'PIX' : null,
           dataRecebimento: i.acao === 'VENDA' && i.valorVenda > 0 ? data : null,
+          localizador: i.linha.localizador || null,
           observacao: observacao(i), criadoPor,
         })
         break

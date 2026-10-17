@@ -25,6 +25,8 @@ export type LinhaLida = {
   /** Positivo entra, negativo sai. */
   pontos: number
   observacao: string | null
+  /** Passagens: localizador da reserva, quando o extrato mostra. */
+  localizador?: string | null
   /** De qual arquivo/página veio (para mostrar e para tirar repetidas). */
   pagina: number
 }
@@ -100,6 +102,8 @@ export type Sugestao = {
   bonusPercentual: number | null
   jaLancado: JaLancado | null
   corrigirBonus: CorrecaoBonus | null
+  /** Esta linha é o bônus, mostrado à parte, da transferência com este id (entra na correção). */
+  parteDe: string | null
   /** Por que esta sugestão (mostrado na tela). */
   motivo: string
 }
@@ -188,11 +192,13 @@ export function sugerirPeloTexto(
   const outro = programaCitado(`${l.descricao} ${l.observacao ?? ''}`, programas, programaId)
 
   if (l.pontos >= 0) {
+    // Bônus antes de transferência: a Smiles mostra o bônus de uma transferência numa
+    // linha à parte ("Transf. Pontos + CM - Bônus"), que não tira pontos da origem.
+    if (/bonus|bonific|promoc/.test(tudo)) return { acao: 'BONUS', outroProgramaId: null, motivo: 'texto fala em bônus' }
     const nomeOutro = outro ? normalizar(programas.find((p) => p.id === outro)?.nome) : ''
-    if (outro && (/transf|resgate|conversao|recebid/.test(tudo) || tudo.includes(`pontos ${nomeOutro}`))) {
+    if (outro && (/transf|resgate|conversao|recebid|parceir/.test(tudo) || tudo.includes(`pontos ${nomeOutro}`))) {
       return { acao: 'TRANSF_RECEBIDA', outroProgramaId: outro, motivo: 'cita outro programa' }
     }
-    if (/bonus|bonific|promoc/.test(tudo)) return { acao: 'BONUS', outroProgramaId: null, motivo: 'texto fala em bônus' }
     if (/compra de (pontos|milhas)|comprar (pontos|milhas)|clube/.test(tudo)) {
       return { acao: 'COMPRA', outroProgramaId: null, motivo: 'compra ou clube de pontos' }
     }
@@ -279,15 +285,57 @@ export function montarSugestoes(
     }
   })
 
-  // 2ª passada: entrada sem par que é uma transferência recebida com outro total.
-  // Só depois de todos os pares exatos, para não roubar o par de outra linha.
+  const textoDe = (l: LinhaLida) => normalizar(`${l.operacao} ${l.descricao} ${l.observacao ?? ''}`)
+  const citadoEm = (l: LinhaLida) => programaCitado(`${l.descricao} ${l.observacao ?? ''}`, contexto.programas, contexto.programaId)
+  const perto = (l: LinhaLida, x: { data: Date }) => Math.abs(dataDe(l.data).getTime() - x.data.getTime()) <= 3 * DIA
+  const jaLancadoDe = (t: { id: string; data: Date }): JaLancado => ({ tipo: 'TRANSFERENCIA', id: t.id, data: t.data.toISOString().slice(0, 10) })
+
   const correcoes: (CorrecaoBonus | null)[] = linhas.map(() => null)
+  /** Linha que é o bônus de uma transferência mostrado à parte (id da transferência). */
+  const parteDe: (string | null)[] = linhas.map(() => null)
+  const livre = (k: number) => !lancados[k] && !correcoes[k] && !parteDe[k]
+  type Recebida = Existentes['recebidas'][number]
+  // O bônus de uma transferência numa linha à parte (a Smiles mostra assim:
+  // "Pontos Livelo 70.000" e "Transferência de pontos - Bônus 56.000").
+  const ehBonusDe = (x: LinhaLida, t: Recebida) => {
+    const c = citadoEm(x)
+    return x.pontos > 0 && x.pontos / t.pontos >= 0.05 && /bonus|transf/.test(textoDe(x)) && (c === null || c === t.origemId)
+  }
+  const corrigir = (n: number, t: Recebida, total: number) => {
+    correcoes[n] = {
+      id: t.id,
+      data: t.data.toISOString().slice(0, 10),
+      origemId: t.origemId,
+      pontos: t.pontos,
+      bonusAtual: t.bonusPercentual,
+      pontosDestinoAtual: t.pontosDestino,
+      bonusNovo: bonusQueResulta(t.pontos, total),
+      pontosDestinoNovo: total,
+    }
+  }
+
+  // 2ª passada (a): transferência já casada pelos pontos que saíram da origem
+  // (lançada sem bônus), com o bônus numa linha à parte: corrigir o total.
+  linhas.forEach((m, n) => {
+    const j = lancados[n]
+    if (!j || j.tipo !== 'TRANSFERENCIA' || m.pontos <= 0) return
+    const t = contexto.existentes.recebidas.find((x) => x.id === j.id)
+    if (!t || m.pontos !== t.pontos) return
+    const b = linhas.findIndex((x, k) => k !== n && livre(k) && perto(x, t) && ehBonusDe(x, t))
+    if (b < 0) return
+    lancados[n] = null
+    corrigir(n, t, m.pontos + linhas[b].pontos)
+    parteDe[b] = t.id
+  })
+
+  // 2ª passada (b): entrada sem par que é uma transferência recebida com outro total.
+  // Só depois de todos os pares exatos, para não roubar o par de outra linha.
   linhas.forEach((l, n) => {
-    if (lancados[n] || l.pontos <= 0) return
+    if (!livre(n) || l.pontos <= 0) return
     const d = dataDe(l.data).getTime()
-    const tudo = normalizar(`${l.operacao} ${l.descricao} ${l.observacao ?? ''}`)
-    const citado = programaCitado(`${l.descricao} ${l.observacao ?? ''}`, contexto.programas, contexto.programaId)
-    let melhor: Existentes['recebidas'][number] | null = null
+    const tudo = textoDe(l)
+    const citado = citadoEm(l)
+    let melhor: Recebida | null = null
     let melhorDif = Infinity
     for (const t of contexto.existentes.recebidas) {
       if (usados.has(t.id) || t.pontos <= 0 || t.pontosDestino === l.pontos) continue
@@ -304,39 +352,84 @@ export function montarSugestoes(
     if (!melhor) return
     usados.add(melhor.id)
     const t = melhor
-    // O extrato pode mostrar a transferência em duas linhas (pontos + bônus) que,
-    // somadas, dão o total já lançado: aí não há nada a corrigir.
-    const par = linhas.findIndex(
+    // Duas linhas (pontos + bônus): a principal tem os pontos que saíram da origem.
+    const outra = linhas.findIndex(
       (x, k) =>
-        k !== n && !lancados[k] && !correcoes[k] && x.pontos > 0 && x.pontos + l.pontos === t.pontosDestino &&
-        Math.abs(dataDe(x.data).getTime() - t.data.getTime()) <= 3 * DIA,
+        k !== n && livre(k) && x.pontos > 0 && perto(x, t) &&
+        (l.pontos === t.pontos ? ehBonusDe(x, t) : x.pontos === t.pontos && ehBonusDe(l, t)),
     )
-    if (par >= 0) {
-      const jaLancado = { tipo: 'TRANSFERENCIA' as const, id: t.id, data: t.data.toISOString().slice(0, 10) }
-      lancados[n] = jaLancado
-      lancados[par] = jaLancado
+    if (outra >= 0) {
+      const total = l.pontos + linhas[outra].pontos
+      if (total === t.pontosDestino) {
+        lancados[n] = jaLancadoDe(t)
+        lancados[outra] = jaLancadoDe(t)
+        return
+      }
+      const [principal, bonus] = l.pontos === t.pontos ? [n, outra] : [outra, n]
+      corrigir(principal, t, total)
+      parteDe[bonus] = t.id
       return
     }
-    correcoes[n] = {
-      id: melhor.id,
-      data: melhor.data.toISOString().slice(0, 10),
-      origemId: melhor.origemId,
-      pontos: melhor.pontos,
-      bonusAtual: melhor.bonusPercentual,
-      pontosDestinoAtual: melhor.pontosDestino,
-      bonusNovo: bonusQueResulta(melhor.pontos, l.pontos),
-      pontosDestinoNovo: l.pontos,
+    // Duas linhas que, somadas, dão o total já lançado: nada a corrigir.
+    const par = linhas.findIndex((x, k) => k !== n && livre(k) && x.pontos > 0 && x.pontos + l.pontos === t.pontosDestino && perto(x, t))
+    if (par >= 0) {
+      lancados[n] = jaLancadoDe(t)
+      lancados[par] = jaLancadoDe(t)
+      return
     }
+    corrigir(n, t, l.pontos)
+  })
+
+  // 3ª passada: resgate cancelado e devolvido. A devolução (+) e o resgate (-) de
+  // mesmo valor se anulam; os dois ficam de fora. Se o resgate cancelado já estava
+  // lançado, ele deixa de casar e aparece para excluir.
+  const anula: (number | null)[] = linhas.map(() => null)
+  linhas.forEach((l, n) => {
+    if (l.pontos <= 0 || !livre(n) || anula[n] !== null) return
+    if (!/reembols|estorn|cancel|devolu|passagem|resgate|bilhete|emiss/.test(textoDe(l))) return
+    const pontuar = (k: number) =>
+      (l.localizador && linhas[k].localizador === l.localizador ? 0 : 2) + (lancados[k] ? 1 : 0)
+    const k = linhas
+      .map((_, k) => k)
+      .filter(
+        (k) =>
+          k !== n && anula[k] === null && linhas[k].pontos === -l.pontos && !correcoes[k] && !parteDe[k] &&
+          Math.abs(dataDe(linhas[k].data).getTime() - dataDe(l.data).getTime()) <= 3 * DIA &&
+          (!lancados[k] || lancados[k]!.tipo === 'SAIDA'),
+      )
+      .sort((a, b) => pontuar(a) - pontuar(b))[0]
+    if (k === undefined) return
+    if (lancados[k]) {
+      usados.delete(lancados[k]!.id)
+      lancados[k] = null
+    }
+    anula[n] = k
+    anula[k] = n
   })
 
   return linhas.map((l, n) => {
     const chave = chaveDaLinha(l)
     const jaLancado = lancados[n]
     const corrigirBonus = correcoes[n]
+    const extras = { parteDe: parteDe[n] }
+    if (anula[n] !== null) {
+      const o = linhas[anula[n]!]
+      return {
+        linha: l, chave, acao: 'IGNORAR' as const, outroProgramaId: null, valorMilheiro: null, bonusPercentual: null,
+        jaLancado: null, corrigirBonus: null, ...extras,
+        motivo: `resgate cancelado: anula a linha de ${o.data.split('-').reverse().join('/')} (${o.pontos > 0 ? '+' : ''}${o.pontos.toLocaleString('pt-BR')})`,
+      }
+    }
+    if (parteDe[n]) {
+      return {
+        linha: l, chave, acao: 'TRANSF_RECEBIDA' as const, outroProgramaId: null, valorMilheiro: null, bonusPercentual: null,
+        jaLancado: null, corrigirBonus: null, ...extras, motivo: 'bônus da transferência, que entra na correção do bônus',
+      }
+    }
     if (corrigirBonus) {
       return {
         linha: l, chave, acao: 'TRANSF_RECEBIDA' as const, outroProgramaId: corrigirBonus.origemId,
-        valorMilheiro: null, bonusPercentual: corrigirBonus.bonusNovo, jaLancado, corrigirBonus,
+        valorMilheiro: null, bonusPercentual: corrigirBonus.bonusNovo, jaLancado, corrigirBonus, ...extras,
         motivo: 'transferência já lançada com outro bônus',
       }
     }
@@ -353,10 +446,11 @@ export function montarSugestoes(
         bonusPercentual: regra.bonusPercentual,
         jaLancado,
         corrigirBonus,
+        ...extras,
         motivo: 'como você classificou da última vez',
       }
     }
     const s = sugerirPeloTexto(l, contexto.programas, contexto.programaId)
-    return { linha: l, chave, ...s, valorMilheiro: null, bonusPercentual: null, jaLancado, corrigirBonus }
+    return { linha: l, chave, ...s, valorMilheiro: null, bonusPercentual: null, jaLancado, corrigirBonus, ...extras }
   })
 }
