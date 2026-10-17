@@ -31,7 +31,7 @@ export async function lerPagina(entrada: {
   return lerPaginaDoExtrato({ pagina: entrada.pagina, dados: entrada.dados, tipo, programa: programa.nome })
 }
 
-/** Lançamento que o sistema tem no período do extrato, mas que o extrato não mostra. */
+/** Lançamento que o sistema tem do início do extrato em diante, mas que o extrato não mostra. */
 export type ForaDoExtrato = {
   tipo: 'ENTRADA' | 'SAIDA' | 'TRANSFERENCIA'
   id: string
@@ -81,9 +81,10 @@ export async function montarConferencia(entrada: {
   const sugestoes = montarSugestoes(linhas, { programaId, programas, regras, existentes: { entradas, enviadas, recebidas, saidas } })
   const dia = (s: string) => new Date(`${s}T00:00:00Z`).getTime()
   const primeira = linhas[0] ? dia(linhas[0].data) : Infinity
-  const ultima = linhas.length ? dia(linhas[linhas.length - 1].data) : -Infinity
   const antes = (xs: { data: Date }[]) => xs.some((x) => x.data.getTime() < primeira)
-  const noPeriodo = (d: Date) => d.getTime() >= primeira && d.getTime() <= ultima
+  // Do início do extrato em diante, sem limite final: o saldo do extrato é o de hoje, então o
+  // que o sistema tem depois da última linha (e o extrato não mostra) também entra na conta.
+  const noPeriodo = (d: Date) => d.getTime() >= primeira
 
   // O que o sistema tem no período e não casou com nenhuma linha do extrato.
   // As transferências com bônus a corrigir também casaram: não são para excluir.
@@ -164,7 +165,7 @@ export async function gravarExtrato(entrada: {
   /** Lançamentos do sistema que não aparecem no extrato e devem ser apagados. */
   excluir: { tipo: 'ENTRADA' | 'SAIDA' | 'TRANSFERENCIA'; id: string }[]
   /** Transferências recebidas cujo total passa a ser o do extrato (o bônus é recalculado). */
-  corrigir: { id: string; pontosDestino: number }[]
+  corrigir?: { id: string; pontosDestino: number }[]
 }): Promise<{ erro?: string; ok?: string }> {
   const usuario = await exigirUsuarioAction()
   const r = z
@@ -174,7 +175,8 @@ export async function gravarExtrato(entrada: {
       itens: z.array(Item).max(2000),
       saldoInicial: SaldoInicial.nullable(),
       excluir: z.array(z.object({ tipo: z.enum(['ENTRADA', 'SAIDA', 'TRANSFERENCIA']), id: z.string() })).max(2000),
-      corrigir: z.array(z.object({ id: z.string(), pontosDestino: z.number().int().positive() })).max(2000),
+      // Opcional: uma tela aberta antes desta versão não envia o campo.
+      corrigir: z.array(z.object({ id: z.string(), pontosDestino: z.number().int().positive() })).max(2000).default([]),
     })
     .safeParse(entrada)
   if (!r.success) return { erro: `Dados inválidos: ${r.error.issues[0].path.join('.')} ${r.error.issues[0].message}` }
