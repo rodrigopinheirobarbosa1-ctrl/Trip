@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from 'react'
 import Link from '@/components/link'
 import { Aviso } from '@/components/ui'
 import { calcularPontosDestino } from '@/lib/carteira'
-import { formatarCmp, formatarData, formatarPontos, lerCentavos, lerData, lerNumero, lerPontos } from '@/lib/formatos'
+import { formatarCmp, formatarData, formatarPercentual, formatarPontos, lerCentavos, lerData, lerNumero, lerPontos } from '@/lib/formatos'
 import { ACOES, ACOES_ENTRADA, ACOES_SAIDA, type Acao, type LinhaLida, type Sugestao } from '@/lib/extrato/sugestao'
 import { prepararArquivos } from './arquivos'
 import { gravarExtrato, lerPagina, montarConferencia, type Conferencia, type ItemConfirmado } from './actions'
@@ -38,7 +38,7 @@ function linhaInicial(s: Sugestao): Linha {
   const pts = Math.abs(s.linha.pontos)
   return {
     s,
-    incluir: !s.jaLancado && s.acao !== 'IGNORAR',
+    incluir: !s.jaLancado && !s.corrigirBonus && s.acao !== 'IGNORAR',
     acao: s.acao,
     outroProgramaId: s.outroProgramaId ?? '',
     valor: s.acao === 'COMPRA' && s.valorMilheiro ? centavosParaTexto(Math.round((s.valorMilheiro * pts) / 1000)) : '',
@@ -65,11 +65,17 @@ export function ImportadorExtrato({
   const [erros, setErros] = useState<string[]>([])
   const [conferencia, setConferencia] = useState<Conferencia | null>(null)
   const [saldoExtrato, setSaldoExtrato] = useState<number | null>(null)
+  /** O campo do saldo, editável: a pessoa pode digitar se a leitura não achou. */
+  const [saldoTexto, setSaldoTexto] = useState('')
+  /** Saldos diferentes encontrados nos prints (para avisar). */
+  const [saldosLidos, setSaldosLidos] = useState<number[]>([])
   const [linhas, setLinhas] = useState<Linha[]>([])
   const [resultado, setResultado] = useState<{ erro?: string; ok?: string } | null>(null)
   const [saldoInicial, setSaldoInicial] = useState({ lancar: false, pontos: '', valor: '' })
   /** Lançamentos do sistema, no período, que não aparecem no extrato e serão apagados. */
   const [excluir, setExcluir] = useState<Set<string>>(new Set())
+  /** Transferências já lançadas com outro total cujo bônus será corrigido para o do extrato. */
+  const [corrigir, setCorrigir] = useState<Set<string>>(new Set())
   const [gravando, iniciar] = useTransition()
 
   const lendo = progresso !== null && progresso.feitas < progresso.total
@@ -114,38 +120,82 @@ export function ImportadorExtrato({
     }
     await Promise.all([trabalhar(), trabalhar()])
     setErros(falhas)
-    setSaldoExtrato(saldos.find((s) => s !== null) ?? null)
 
     const c = await montarConferencia({ titularId, programaId, paginas: lidas })
     setConferencia(c)
     setLinhas(c.sugestoes.map(linhaInicial))
-    // O extrato é a referência. Com o saldo final dele dá para saber quanto havia antes do
-    // período: saldo final - tudo o que o extrato movimentou. O que o sistema já tinha antes
-    // do período é descontado, e a diferença vira saldo inicial (ou ajuste, se negativa).
-    const saldoFinal = saldos.find((s) => s !== null) ?? null
+    // Um print só com o saldo (sem movimentações) foi tirado para isso: tem prioridade.
+    const soSaldo = saldos.find((x, n) => x !== null && lidas[n].length === 0)
+    const saldoFinal = soSaldo ?? saldos.find((x) => x !== null) ?? null
+    setSaldosLidos([...new Set(saldos.filter((x): x is number => x !== null))])
+    aplicarSaldo(saldoFinal, c, true)
+    setCorrigir(new Set(c.sugestoes.flatMap((x) => (x.corrigirBonus ? [x.corrigirBonus.id] : []))))
+    setProgresso(null)
+  }
+
+  /**
+   * O extrato é a referência. Com o saldo final dele dá para saber quanto havia antes do
+   * período: saldo final - tudo o que o extrato movimentou. O que o sistema já tinha antes
+   * do período é descontado, e a diferença vira saldo inicial (ou ajuste, se negativa).
+   */
+  function aplicarSaldo(saldoFinal: number | null, c: Conferencia, marcarExclusoes: boolean) {
+    setSaldoExtrato(saldoFinal)
+    setSaldoTexto(saldoFinal !== null ? formatarPontos(saldoFinal) : '')
     const ajuste =
       saldoFinal !== null ? saldoFinal - c.sugestoes.reduce((s, x) => s + x.linha.pontos, 0) - c.saldoAntesDoPeriodo : null
-    setSaldoInicial({
+    setSaldoInicial((atual) => ({
       lancar: ajuste !== null && ajuste !== 0,
       pontos: ajuste !== null && ajuste !== 0 ? formatarPontos(ajuste) : '',
-      valor: '',
-    })
+      valor: atual.valor,
+    }))
     // Com o saldo do extrato conhecido, o que não aparece nele vem marcado para excluir.
     // Transferências não: mexem também no outro programa e podem ter saído de outra pessoa.
-    setExcluir(new Set(saldoFinal !== null ? c.foraDoExtrato.filter((f) => f.tipo !== 'TRANSFERENCIA').map((f) => f.id) : []))
-    setProgresso(null)
+    if (marcarExclusoes) {
+      setExcluir(new Set(saldoFinal !== null ? c.foraDoExtrato.filter((f) => f.tipo !== 'TRANSFERENCIA').map((f) => f.id) : []))
+    }
+  }
+
+  /** A pessoa digitou o saldo do extrato. */
+  function digitarSaldo(texto: string) {
+    setSaldoTexto(texto)
+    if (!conferencia) return
+    const valor = texto.trim() === '' ? null : lerPontos(texto)
+    if (texto.trim() !== '' && valor === null) return
+    // Na primeira vez que o saldo aparece, o que está fora do extrato vem marcado para excluir.
+    const primeiraVez = saldoExtrato === null && valor !== null
+    setSaldoExtrato(valor)
+    const ajuste = valor !== null ? valor - conferencia.sugestoes.reduce((s, x) => s + x.linha.pontos, 0) - conferencia.saldoAntesDoPeriodo : null
+    setSaldoInicial((atual) => ({
+      lancar: ajuste !== null && ajuste !== 0,
+      pontos: ajuste !== null && ajuste !== 0 ? formatarPontos(ajuste) : '',
+      valor: atual.valor,
+    }))
+    if (primeiraVez) setExcluir(new Set(conferencia.foraDoExtrato.filter((f) => f.tipo !== 'TRANSFERENCIA').map((f) => f.id)))
   }
 
   const alterar = (i: number, mudanca: Partial<Linha>) =>
     setLinhas((ls) => ls.map((l, n) => (n === i ? { ...l, ...mudanca } : l)))
+  // Corrigir a transferência e lançar a linha como nova contariam os mesmos pontos duas vezes.
+  const marcarCorrecao = (i: number, id: string, sim: boolean) => {
+    setCorrigir((c) => {
+      const n = new Set(c)
+      if (sim) n.add(id)
+      else n.delete(id)
+      return n
+    })
+    if (sim) alterar(i, { incluir: false })
+  }
+  const nomeDoPrograma = (id: string) => conferencia?.programas.find((p) => p.id === id)?.nome ?? '?'
 
   const marcadas = linhas.filter((l) => l.incluir && l.acao !== 'IGNORAR')
+  const correcoes = linhas.flatMap((l) => (l.s.corrigirBonus && corrigir.has(l.s.corrigirBonus.id) ? [l.s.corrigirBonus] : []))
+  const efeitoCorrecoes = correcoes.reduce((s, c) => s + c.pontosDestinoNovo - c.pontosDestinoAtual, 0)
   const pontosSaldoInicial = saldoInicial.lancar ? (lerPontos(saldoInicial.pontos) ?? 0) : 0
   const foraDoExtrato = conferencia?.foraDoExtrato ?? []
   const efeitoExcluidos = foraDoExtrato.filter((f) => excluir.has(f.id)).reduce((s, f) => s + f.pontos, 0)
   const mantidosForaDoExtrato = foraDoExtrato.filter((f) => !excluir.has(f.id)).reduce((s, f) => s + f.pontos, 0)
   const saldoDepois =
-    (conferencia?.saldoSistema ?? 0) - efeitoExcluidos + pontosSaldoInicial + marcadas.reduce((s, l) => s + l.s.linha.pontos, 0)
+    (conferencia?.saldoSistema ?? 0) - efeitoExcluidos + efeitoCorrecoes + pontosSaldoInicial + marcadas.reduce((s, l) => s + l.s.linha.pontos, 0)
   const primeiraData = linhas[0]?.s.linha.data
   const diaAntes = primeiraData ? new Date(new Date(`${primeiraData}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10) : null
   const comprasSemValor = marcadas.filter((l) => l.acao === 'COMPRA' && !lerCentavos(l.valor)).length
@@ -181,6 +231,7 @@ export function ImportadorExtrato({
             ? { data: diaAntes, pontos: pontosIniciais, valor: pontosIniciais > 0 ? (lerCentavos(saldoInicial.valor) ?? 0) : 0 }
             : null,
         excluir: foraDoExtrato.filter((f) => excluir.has(f.id)).map((f) => ({ tipo: f.tipo, id: f.id })),
+        corrigir: correcoes.map((c) => ({ id: c.id, pontosDestino: c.pontosDestinoNovo })),
       })
       setResultado(r)
       if (r.ok) {
@@ -295,8 +346,26 @@ export function ImportadorExtrato({
               <p className="font-semibold">{formatarPontos(saldoDepois)}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">Saldo mostrado no extrato</p>
-              <p className="font-semibold">{saldoExtrato !== null ? formatarPontos(saldoExtrato) : 'não aparece nos prints'}</p>
+              <label className="block">
+                <span className="text-xs text-slate-500">Saldo mostrado no extrato</span>
+                <input
+                  value={saldoTexto}
+                  onChange={(e) => digitarSaldo(e.target.value)}
+                  placeholder="Digite o saldo atual"
+                  inputMode="numeric"
+                  className="campo mt-0.5 w-40 py-1 font-semibold"
+                />
+              </label>
+              {saldoExtrato === null && (
+                <p className="text-xs text-amber-700">
+                  Não achei o saldo nos prints. Digite o saldo atual que aparece no site ou aplicativo do programa.
+                </p>
+              )}
+              {saldosLidos.length > 1 && (
+                <p className="text-xs text-amber-700">
+                  Os prints mostram saldos diferentes ({saldosLidos.map(formatarPontos).join(', ')}). Confira se o campo está com o atual.
+                </p>
+              )}
               {saldoExtrato !== null && saldoExtrato !== saldoDepois && (
                 <p className="text-xs text-amber-700">
                   Diferença de {formatarPontos(saldoDepois - saldoExtrato)}.{' '}
@@ -466,7 +535,15 @@ export function ImportadorExtrato({
                   return (
                     <tr key={i} className={`border-b border-slate-100 align-top ${l.incluir ? '' : 'bg-slate-50 text-slate-400'}`}>
                       <td className="px-3 py-2">
-                        <input type="checkbox" checked={l.incluir} onChange={(e) => alterar(i, { incluir: e.target.checked })} aria-label="Incluir" />
+                        <input
+                          type="checkbox"
+                          checked={l.incluir}
+                          onChange={(e) => {
+                            alterar(i, { incluir: e.target.checked })
+                            if (e.target.checked && l.s.corrigirBonus) marcarCorrecao(i, l.s.corrigirBonus.id, false)
+                          }}
+                          aria-label="Incluir"
+                        />
                       </td>
                       <td className="whitespace-nowrap px-3 py-2">{formatarData(lerData(l.s.linha.data))}</td>
                       <td className="px-3 py-2">
@@ -475,7 +552,33 @@ export function ImportadorExtrato({
                           {l.s.linha.operacao}
                           {l.s.linha.observacao && ` · ${l.s.linha.observacao}`}
                         </span>
-                        {l.s.jaLancado ? (
+                        {l.s.corrigirBonus ? (
+                          <label className="mt-1 flex items-start gap-2 rounded-lg bg-amber-50 px-2 py-1 text-xs text-amber-800 ring-1 ring-amber-200">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5"
+                              checked={corrigir.has(l.s.corrigirBonus.id)}
+                              onChange={(e) => marcarCorrecao(i, l.s.corrigirBonus!.id, e.target.checked)}
+                            />
+                            <span>
+                              <Link href={`/transferencias/${l.s.corrigirBonus.id}`} className="font-semibold underline" target="_blank">
+                                Transferência de {nomeDoPrograma(l.s.corrigirBonus.origemId)} de {formatarData(lerData(l.s.corrigirBonus.data))}
+                              </Link>{' '}
+                              já lançada: {formatarPontos(l.s.corrigirBonus.pontos)} pontos com bônus de{' '}
+                              {formatarPercentual(l.s.corrigirBonus.bonusAtual)} = {formatarPontos(l.s.corrigirBonus.pontosDestinoAtual)}.{' '}
+                              <strong>
+                                Corrigir o bônus para {formatarPercentual(l.s.corrigirBonus.bonusNovo)} ={' '}
+                                {formatarPontos(l.s.corrigirBonus.pontosDestinoNovo)}
+                              </strong>
+                              , como no extrato.
+                              {!corrigir.has(l.s.corrigirBonus.id) && !l.incluir && (
+                                <span className="block text-amber-700">
+                                  Sem a correção, a transferência fica como está. Se for outra transferência, marque a linha para lançar.
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        ) : l.s.jaLancado ? (
                           <span className="mt-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
                             Já lançado em {formatarData(lerData(l.s.jaLancado.data))}
                           </span>
@@ -575,6 +678,7 @@ export function ImportadorExtrato({
             <div className="flex-1 text-sm text-slate-600">
               <strong>{marcadas.length}</strong> lançamento(s) a gravar
               {excluir.size > 0 && <>, <strong>{excluir.size}</strong> a excluir</>}
+              {correcoes.length > 0 && <>, <strong>{correcoes.length}</strong> bônus a corrigir</>}
               {resumoPorAcao.length > 0 && ': ' + resumoPorAcao.map(([a, n]) => `${n} ${ACOES[a].toLowerCase()}`).join(', ')}
               {comprasSemValor > 0 && <span className="block text-amber-700">{comprasSemValor} compra(s) sem valor pago.</span>}
               {transfSemPrograma > 0 && <span className="block text-red-700">{transfSemPrograma} transferência(s) sem o outro programa.</span>}
@@ -582,7 +686,7 @@ export function ImportadorExtrato({
             <button type="button" onClick={() => { setConferencia(null); setLinhas([]) }} className="btn-secundario" disabled={gravando}>
               Cancelar
             </button>
-            <button type="button" onClick={gravar} className="btn-primario" disabled={gravando || (marcadas.length === 0 && excluir.size === 0 && !saldoInicial.lancar) || transfSemPrograma > 0}>
+            <button type="button" onClick={gravar} className="btn-primario" disabled={gravando || (marcadas.length === 0 && excluir.size === 0 && correcoes.length === 0 && !saldoInicial.lancar) || transfSemPrograma > 0}>
               {gravando ? 'Gravando...' : 'Gravar lançamentos'}
             </button>
           </div>

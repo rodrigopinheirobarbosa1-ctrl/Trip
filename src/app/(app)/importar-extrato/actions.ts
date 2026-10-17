@@ -10,7 +10,7 @@ import { detalharEntrada, detalharSaida, detalharTransferencia } from '@/lib/det
 import { carregarMovimentos, validarSaldos } from '@/lib/dados'
 import { calcularCarteira, calcularPontosDestino, chavePosicao, type Movimentos } from '@/lib/carteira'
 import { lerPaginaDoExtrato, type ResultadoLeitura } from '@/lib/extrato/ler-com-ia'
-import { ACOES, juntarPaginas, montarSugestoes, type LinhaLida, type Sugestao } from '@/lib/extrato/sugestao'
+import { ACOES, bonusQueResulta, juntarPaginas, montarSugestoes, type LinhaLida, type Sugestao } from '@/lib/extrato/sugestao'
 
 const TIPOS_ARQUIVO = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const
 
@@ -69,7 +69,10 @@ export async function montarConferencia(entrada: {
     db.regraExtrato.findMany({ where: { programaId } }),
     db.entrada.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true, categoria: true, observacao: true } }),
     db.transferencia.findMany({ where: { titularId, origemId: programaId }, select: { id: true, data: true, pontos: true, pontosDestino: true, destino: { select: { nome: true } } } }),
-    db.transferencia.findMany({ where: { titularId, destinoId: programaId }, select: { id: true, data: true, pontos: true, pontosDestino: true, origem: { select: { nome: true } } } }),
+    db.transferencia.findMany({
+      where: { titularId, destinoId: programaId },
+      select: { id: true, data: true, pontos: true, pontosDestino: true, origemId: true, bonusPercentual: true, origem: { select: { nome: true } } },
+    }),
     db.saida.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true, tipo: true, cliente: true, observacao: true } }),
     carregarMovimentos(),
   ])
@@ -83,7 +86,8 @@ export async function montarConferencia(entrada: {
   const noPeriodo = (d: Date) => d.getTime() >= primeira && d.getTime() <= ultima
 
   // O que o sistema tem no período e não casou com nenhuma linha do extrato.
-  const casados = new Set(sugestoes.map((s) => s.jaLancado?.id).filter(Boolean))
+  // As transferências com bônus a corrigir também casaram: não são para excluir.
+  const casados = new Set(sugestoes.flatMap((s) => [s.jaLancado?.id, s.corrigirBonus?.id]).filter(Boolean))
   const iso = (d: Date) => d.toISOString().slice(0, 10)
   const foraDoExtrato: ForaDoExtrato[] = [
     ...entradas.filter((e) => noPeriodo(e.data) && !casados.has(e.id)).map((e) => ({
@@ -159,6 +163,8 @@ export async function gravarExtrato(entrada: {
   saldoInicial: z.infer<typeof SaldoInicial> | null
   /** Lançamentos do sistema que não aparecem no extrato e devem ser apagados. */
   excluir: { tipo: 'ENTRADA' | 'SAIDA' | 'TRANSFERENCIA'; id: string }[]
+  /** Transferências recebidas cujo total passa a ser o do extrato (o bônus é recalculado). */
+  corrigir: { id: string; pontosDestino: number }[]
 }): Promise<{ erro?: string; ok?: string }> {
   const usuario = await exigirUsuarioAction()
   const r = z
@@ -168,10 +174,11 @@ export async function gravarExtrato(entrada: {
       itens: z.array(Item).max(2000),
       saldoInicial: SaldoInicial.nullable(),
       excluir: z.array(z.object({ tipo: z.enum(['ENTRADA', 'SAIDA', 'TRANSFERENCIA']), id: z.string() })).max(2000),
+      corrigir: z.array(z.object({ id: z.string(), pontosDestino: z.number().int().positive() })).max(2000),
     })
     .safeParse(entrada)
   if (!r.success) return { erro: `Dados inválidos: ${r.error.issues[0].path.join('.')} ${r.error.issues[0].message}` }
-  const { titularId, programaId, itens, saldoInicial, excluir } = r.data
+  const { titularId, programaId, itens, saldoInicial, excluir, corrigir } = r.data
   const programa = await db.programa.findUnique({ where: { id: programaId } })
   if (!programa) return { erro: 'Programa não encontrado.' }
 
@@ -285,7 +292,23 @@ export async function gravarExtrato(entrada: {
   }
   const apagar = new Set([...entExcluir, ...saiExcluir, ...traExcluir].map((x) => x.id))
 
-  const total = entradas.length + transferencias.length + saidas.length + apagar.size
+  // Transferências que chegaram neste programa com o total errado (o bônus ficou de fora).
+  const aCorrigir = await db.transferencia.findMany({
+    where: { id: { in: corrigir.map((c) => c.id) }, titularId, destinoId: programaId },
+    include: { titular: true, origem: true, destino: true },
+  })
+  if (aCorrigir.length !== new Set(corrigir.map((c) => c.id)).size || aCorrigir.some((t) => apagar.has(t.id))) {
+    return { erro: 'Alguma transferência a corrigir não chega neste programa ou já foi apagada. Leia o extrato de novo.' }
+  }
+  const novoDestino = new Map(corrigir.map((c) => [c.id, c.pontosDestino]))
+  for (const t of aCorrigir) {
+    const bonus = bonusQueResulta(t.pontos, novoDestino.get(t.id)!)
+    if (bonus < -99 || bonus > 1000) {
+      return { erro: `O total do extrato daria um bônus de ${bonus}% na transferência de ${t.origem.nome}. Confira a linha.` }
+    }
+  }
+
+  const total = entradas.length + transferencias.length + saidas.length + apagar.size + aCorrigir.length
   if (total === 0) return { erro: 'Nenhuma linha marcada para lançar.' }
 
   // Mesma regra dos lançamentos à mão: não pode deixar saldo negativo.
@@ -310,7 +333,9 @@ export async function gravarExtrato(entrada: {
         ...entradas.map((e, n) => ({ id: `x-e${n}`, data: e.data, titularId, programaId, pontos: e.pontos, valor: e.valor ?? 0, ordem: agora + n })),
       ],
       transferencias: [
-        ...m.transferencias.filter((t) => !apagar.has(t.id)),
+        ...m.transferencias
+          .filter((t) => !apagar.has(t.id))
+          .map((t) => (novoDestino.has(t.id) ? { ...t, pontosDestino: novoDestino.get(t.id)! } : t)),
         ...transferencias.map((t, n) => ({
           id: `x-t${n}`, data: t.data, titularId, origemId: t.origemId, destinoId: t.destinoId,
           pontos: t.pontos, pontosDestino: t.pontosDestino, ordem: agora + n,
@@ -334,6 +359,13 @@ export async function gravarExtrato(entrada: {
     if (entradas.length) await tx.entrada.createMany({ data: entradas })
     for (const t of transferencias) await tx.transferencia.create({ data: t })
     if (saidas.length) await tx.saida.createMany({ data: saidas })
+    for (const t of aCorrigir) {
+      const pontosDestino = novoDestino.get(t.id)!
+      await tx.transferencia.update({
+        where: { id: t.id },
+        data: { pontosDestino, bonusPercentual: bonusQueResulta(t.pontos, pontosDestino) },
+      })
+    }
 
     // Lembra a classificação de cada tipo de linha para a próxima importação.
     const ultimas = new Map<string, ItemConfirmado>()
@@ -357,7 +389,8 @@ export async function gravarExtrato(entrada: {
   const titular = await db.titular.findUnique({ where: { id: titularId } })
   const resumo =
     `${entradas.length} entrada(s), ${transferencias.length} transferência(s) e ${saidas.length} saída(s) lançadas` +
-    (apagar.size ? `; ${apagar.size} lançamento(s) que não estavam no extrato foram excluídos` : '')
+    (apagar.size ? `; ${apagar.size} lançamento(s) que não estavam no extrato foram excluídos` : '') +
+    (aCorrigir.length ? `; ${aCorrigir.length} transferência(s) com o bônus corrigido` : '')
   // Tudo o que foi excluído fica descrito no histórico, para poder ser lançado
   // de novo (por exemplo, no CPF certo) sem perder o valor pago ou o bônus.
   const excluidos = [
@@ -365,6 +398,17 @@ export async function gravarExtrato(entrada: {
     ...traExcluir.map((t) => ({ entidade: 'Transferencia', id: t.id, texto: detalharTransferencia(t) })),
     ...saiExcluir.map((x) => ({ entidade: 'Saida', id: x.id, texto: detalharSaida(x) })),
   ]
+  for (const t of aCorrigir) {
+    const pontosDestino = novoDestino.get(t.id)!
+    const depois = { ...t, pontosDestino, bonusPercentual: bonusQueResulta(t.pontos, pontosDestino) }
+    await auditar({
+      usuario,
+      acao: 'ALTERAR',
+      entidade: 'Transferencia',
+      entidadeId: t.id,
+      resumo: `Corrigiu o bônus ao importar o extrato ${programa.nome} — antes: ${detalharTransferencia(t)} — depois: ${detalharTransferencia(depois)}`,
+    })
+  }
   for (const x of excluidos) {
     await auditar({
       usuario,
