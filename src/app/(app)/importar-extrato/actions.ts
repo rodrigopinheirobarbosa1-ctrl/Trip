@@ -1,5 +1,6 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import type { Prisma } from '@prisma/client'
@@ -68,7 +69,10 @@ export async function montarConferencia(entrada: {
     db.programa.findMany({ orderBy: { nome: 'asc' }, select: { id: true, nome: true } }),
     db.regraExtrato.findMany({ where: { programaId } }),
     db.entrada.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true, categoria: true, observacao: true } }),
-    db.transferencia.findMany({ where: { titularId, origemId: programaId }, select: { id: true, data: true, pontos: true, pontosDestino: true, destino: { select: { nome: true } } } }),
+    db.transferencia.findMany({
+      where: { titularId, origemId: programaId },
+      select: { id: true, data: true, pontos: true, pontosDestino: true, compraId: true, destino: { select: { nome: true } } },
+    }),
     db.transferencia.findMany({
       where: { titularId, destinoId: programaId },
       select: { id: true, data: true, pontos: true, pontosDestino: true, origemId: true, bonusPercentual: true, origem: { select: { nome: true } } },
@@ -88,7 +92,7 @@ export async function montarConferencia(entrada: {
 
   // O que o sistema tem no período e não casou com nenhuma linha do extrato.
   // As transferências com bônus a corrigir também casaram: não são para excluir.
-  const casados = new Set(sugestoes.flatMap((s) => [s.jaLancado?.id, s.corrigirBonus?.id]).filter(Boolean))
+  const casados = new Set(sugestoes.flatMap((s) => [s.jaLancado?.id, s.jaLancado?.compraId, s.corrigirBonus?.id]).filter(Boolean))
   const iso = (d: Date) => d.toISOString().slice(0, 10)
   const foraDoExtrato: ForaDoExtrato[] = [
     ...entradas.filter((e) => noPeriodo(e.data) && !casados.has(e.id)).map((e) => ({
@@ -144,6 +148,8 @@ const Item = z.object({
   bonusPercentual: z.number().min(-99).max(1000),
   /** Vendas: valor da venda em centavos. */
   valorVenda: z.number().int().nonnegative(),
+  /** Transferência imediata: pontos comprados na hora (a linha do extrato mostra só os que já estavam na conta). */
+  pontosComprados: z.number().int().nonnegative().default(0),
 })
 export type ItemConfirmado = z.infer<typeof Item>
 
@@ -242,6 +248,39 @@ export async function gravarExtrato(entrada: {
         }
         break
       }
+      case 'TRANSF_IMEDIATA': {
+        if (entra) return { erro: `Linha de ${i.linha.data} é de entrada e não pode ser transferência imediata.` }
+        if (!i.outroProgramaId || i.outroProgramaId === programaId) {
+          return { erro: `Escolha para qual programa foi a transferência imediata de ${i.linha.data} (${observacao(i)}).` }
+        }
+        if (i.pontosComprados <= 0) {
+          return { erro: `Informe quantos pontos foram comprados na transferência imediata de ${i.linha.data} (${observacao(i)}).` }
+        }
+        // A compra feita na hora (o extrato não mostra) e a transferência do total, ligadas.
+        const compraId = randomUUID()
+        const total = pts + i.pontosComprados
+        entradas.push({
+          id: compraId,
+          data,
+          titularId,
+          programaId,
+          categoria: 'COMPRA',
+          pontos: i.pontosComprados,
+          valor: i.valor,
+          formaPagamento: i.valor > 0 ? i.formaPagamento : 'SEM_DESEMBOLSO',
+          parcelas: i.valor > 0 ? i.parcelas : 1,
+          observacao: `Compra na transferência imediata · ${observacao(i)}`,
+          criadoPor,
+        })
+        transferencias.push({
+          data, titularId, origemId: programaId, destinoId: i.outroProgramaId, pontos: total,
+          bonusPercentual: i.bonusPercentual,
+          pontosDestino: i.pontosOutro ?? calcularPontosDestino(total, i.bonusPercentual),
+          compraId,
+          observacao: `Transferência imediata · ${observacao(i)}`, criadoPor,
+        })
+        break
+      }
       case 'USO_PESSOAL':
       case 'VENDA':
       case 'OUTRA_SAIDA': {
@@ -332,7 +371,7 @@ export async function gravarExtrato(entrada: {
     (m): Movimentos => ({
       entradas: [
         ...m.entradas.filter((e) => !apagar.has(e.id)),
-        ...entradas.map((e, n) => ({ id: `x-e${n}`, data: e.data, titularId, programaId, pontos: e.pontos, valor: e.valor ?? 0, ordem: agora + n })),
+        ...entradas.map((e, n) => ({ id: e.id ?? `x-e${n}`, data: e.data, titularId, programaId, pontos: e.pontos, valor: e.valor ?? 0, ordem: agora + n })),
       ],
       transferencias: [
         ...m.transferencias
@@ -340,7 +379,7 @@ export async function gravarExtrato(entrada: {
           .map((t) => (novoDestino.has(t.id) ? { ...t, pontosDestino: novoDestino.get(t.id)! } : t)),
         ...transferencias.map((t, n) => ({
           id: `x-t${n}`, data: t.data, titularId, origemId: t.origemId, destinoId: t.destinoId,
-          pontos: t.pontos, pontosDestino: t.pontosDestino, ordem: agora + n,
+          pontos: t.pontos, pontosDestino: t.pontosDestino, ordem: agora + n, compraId: t.compraId ?? null,
         })),
       ],
       saidas: [
@@ -377,7 +416,12 @@ export async function gravarExtrato(entrada: {
       const dados = {
         acao: i.acao,
         outroProgramaId: i.outroProgramaId,
-        valorMilheiro: i.acao === 'COMPRA' && i.valor > 0 ? Math.round((i.valor / pts) * 1000) : null,
+        valorMilheiro:
+          i.acao === 'COMPRA' && i.valor > 0
+            ? Math.round((i.valor / pts) * 1000)
+            : i.acao === 'TRANSF_IMEDIATA' && i.valor > 0 && i.pontosComprados > 0
+              ? Math.round((i.valor / i.pontosComprados) * 1000)
+              : null,
         bonusPercentual: i.acao.startsWith('TRANSF') ? i.bonusPercentual : null,
       }
       await tx.regraExtrato.upsert({

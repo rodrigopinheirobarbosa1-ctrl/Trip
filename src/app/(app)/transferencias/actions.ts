@@ -39,19 +39,59 @@ function lerTransferencia(dados: FormData) {
     bonusPercentual,
     pontosDestino,
     observacao: textoOpcional(dados, 'observacao'),
+    imediata: dados.get('imediata') === 'sim',
   }
 }
 
-const paraCarteira = (id: string, t: ReturnType<typeof lerTransferencia>, ordem: number): MovTransferencia => ({
+const DIA = 86400000
+
+/**
+ * Transferência imediata: acha a compra feita na hora, na origem, para completar
+ * a transferência. Mesma pessoa e programa, até 3 dias de diferença, no máximo os
+ * pontos transferidos, e ainda não ligada a outra transferência.
+ */
+async function acharCompraImediata(
+  t: { data: Date; titularId: string; origemId: string; pontos: number },
+  transferenciaId: string | null,
+): Promise<string> {
+  const compras = await db.entrada.findMany({
+    where: {
+      titularId: t.titularId,
+      programaId: t.origemId,
+      categoria: 'COMPRA',
+      pontos: { lte: t.pontos },
+      data: { gte: new Date(t.data.getTime() - 3 * DIA), lte: new Date(t.data.getTime() + 3 * DIA) },
+      transferenciasImediatas: { none: transferenciaId ? { id: { not: transferenciaId } } : {} },
+    },
+  })
+  const melhor = compras.sort(
+    (a, b) => Math.abs(a.data.getTime() - t.data.getTime()) - Math.abs(b.data.getTime() - t.data.getTime()) || b.pontos - a.pontos,
+  )[0]
+  if (!melhor) {
+    throw new ErroFormulario(
+      'Transferência imediata: não achei a compra de pontos na origem perto desta data. Lance antes a compra (Entradas → Nova, tipo Compra, ' +
+        'com os pontos comprados e o valor pago) e salve a transferência de novo.',
+    )
+  }
+  return melhor.id
+}
+
+const paraCarteira = (
+  id: string,
+  t: ReturnType<typeof lerTransferencia>,
+  ordem: number,
+  compraId: string | null,
+): MovTransferencia => ({
   id, data: t.data, titularId: t.titularId, origemId: t.origemId, destinoId: t.destinoId,
-  pontos: t.pontos, pontosDestino: t.pontosDestino, ordem,
+  pontos: t.pontos, pontosDestino: t.pontosDestino, ordem, compraId,
 })
 
 export async function salvarTransferencia(id: string | null, _e: EstadoForm, dados: FormData): Promise<EstadoForm> {
   return tratarErros(async () => {
     const usuario = await exigirUsuarioAction()
-    const nova = lerTransferencia(dados)
+    const { imediata, ...nova } = lerTransferencia(dados)
     const anterior = id ? await db.transferencia.findUniqueOrThrow({ where: { id } }) : null
+    const compraId = imediata ? await acharCompraImediata(nova, id) : null
 
     const chaves: [string, string][] = [
       [nova.titularId, nova.origemId],
@@ -63,7 +103,7 @@ export async function salvarTransferencia(id: string | null, _e: EstadoForm, dad
         ...m,
         transferencias: [
           ...m.transferencias.filter((t) => t.id !== id),
-          paraCarteira(id ?? 'nova', nova, anterior?.criadoEm.getTime() ?? Date.now()),
+          paraCarteira(id ?? 'nova', { ...nova, imediata }, anterior?.criadoEm.getTime() ?? Date.now(), compraId),
         ],
       }),
       chaves,
@@ -72,8 +112,8 @@ export async function salvarTransferencia(id: string | null, _e: EstadoForm, dad
 
     const inclui = { titular: true, origem: true, destino: true } as const
     const salvo = anterior
-      ? await db.transferencia.update({ where: { id: anterior.id }, data: nova, include: inclui })
-      : await db.transferencia.create({ data: { ...nova, criadoPor: usuario.nome }, include: inclui })
+      ? await db.transferencia.update({ where: { id: anterior.id }, data: { ...nova, compraId }, include: inclui })
+      : await db.transferencia.create({ data: { ...nova, compraId, criadoPor: usuario.nome }, include: inclui })
 
     await auditar({
       usuario,
@@ -82,7 +122,8 @@ export async function salvarTransferencia(id: string | null, _e: EstadoForm, dad
       entidadeId: salvo.id,
       resumo:
         `${anterior ? 'Alterou' : 'Lançou'} transferência de ${formatarPontos(salvo.pontos)} ${salvo.origem.nome} → ` +
-        `${formatarPontos(salvo.pontosDestino)} ${salvo.destino.nome} (${salvo.titular.nome}, ${formatarData(salvo.data)})`,
+        `${formatarPontos(salvo.pontosDestino)} ${salvo.destino.nome} (${salvo.titular.nome}, ${formatarData(salvo.data)})` +
+        (compraId ? ' — transferência imediata, com a compra feita na hora' : ''),
     })
     revalidatePath('/', 'layout')
     redirect(dados.get('continuar') === 'sim' ? `/transferencias/nova?ok=${Date.now()}` : '/transferencias')

@@ -22,6 +22,8 @@ type Linha = {
   bonus: string
   pontosOutro: string
   valorVenda: string
+  /** Transferência imediata: pontos comprados na hora. */
+  pontosComprados: string
 }
 
 const FORMAS: { valor: ItemConfirmado['formaPagamento']; texto: string }[] = [
@@ -47,6 +49,7 @@ function linhaInicial(s: Sugestao): Linha {
     bonus: s.bonusPercentual !== null ? String(s.bonusPercentual).replace('.', ',') : '0',
     pontosOutro: '',
     valorVenda: '',
+    pontosComprados: '',
   }
 }
 
@@ -202,7 +205,8 @@ export function ImportadorExtrato({
   const inicioDoExtrato = saldoExtrato !== null ? saldoExtrato - somaLinhas : null
   const primeiraData = linhas[0]?.s.linha.data
   const diaAntes = primeiraData ? new Date(new Date(`${primeiraData}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10) : null
-  const comprasSemValor = marcadas.filter((l) => l.acao === 'COMPRA' && !lerCentavos(l.valor)).length
+  const comprasSemValor = marcadas.filter((l) => (l.acao === 'COMPRA' || l.acao === 'TRANSF_IMEDIATA') && !lerCentavos(l.valor)).length
+  const imediatasSemCompra = marcadas.filter((l) => l.acao === 'TRANSF_IMEDIATA' && !lerPontos(l.pontosComprados)).length
   const transfSemPrograma = marcadas.filter((l) => l.acao.startsWith('TRANSF') && !l.outroProgramaId).length
 
   const resumoPorAcao = useMemo(() => {
@@ -223,6 +227,7 @@ export function ImportadorExtrato({
       pontosOutro: lerPontos(l.pontosOutro) || null,
       bonusPercentual: lerNumero(l.bonus) ?? 0,
       valorVenda: lerCentavos(l.valorVenda) ?? 0,
+      pontosComprados: l.acao === 'TRANSF_IMEDIATA' ? (lerPontos(l.pontosComprados) ?? 0) : 0,
     }))
     const pontosIniciais = lerPontos(saldoInicial.pontos)
     iniciar(async () => {
@@ -598,6 +603,7 @@ export function ImportadorExtrato({
                         ) : l.s.jaLancado ? (
                           <span className="mt-1 inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
                             Já lançado em {formatarData(lerData(l.s.jaLancado.data))}
+                            {l.s.jaLancado.compraId && ' (compra + transferência imediata)'}
                           </span>
                         ) : (
                           <span className="mt-1 block text-xs text-slate-400">Sugestão: {l.s.motivo}</span>
@@ -645,7 +651,70 @@ export function ImportadorExtrato({
                             </span>
                           </div>
                         )}
-                        {l.incluir && l.acao.startsWith('TRANSF') && (
+                        {l.incluir && l.acao === 'TRANSF_IMEDIATA' && (() => {
+                          const comprados = lerPontos(l.pontosComprados) ?? 0
+                          const total = pts + comprados
+                          const chegam = lerPontos(l.pontosOutro) || calcularPontosDestino(total, bonus)
+                          return (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select value={l.outroProgramaId} onChange={(e) => alterar(i, { outroProgramaId: e.target.value })} className="campo w-36 py-1 text-xs">
+                                <option value="">Para qual programa?</option>
+                                {conferencia.programas
+                                  .filter((p) => p.id !== programaId)
+                                  .map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.nome}
+                                    </option>
+                                  ))}
+                              </select>
+                              <input
+                                value={l.pontosComprados}
+                                onChange={(e) => alterar(i, { pontosComprados: e.target.value })}
+                                placeholder="Pontos comprados"
+                                inputMode="numeric"
+                                className="campo w-32 py-1 text-xs"
+                              />
+                              <input
+                                value={l.valor}
+                                onChange={(e) => alterar(i, { valor: e.target.value })}
+                                placeholder="Valor pago R$"
+                                inputMode="decimal"
+                                className="campo w-28 py-1 text-xs"
+                              />
+                              <select value={l.formaPagamento} onChange={(e) => alterar(i, { formaPagamento: e.target.value as Linha['formaPagamento'] })} className="campo w-28 py-1 text-xs">
+                                {FORMAS.map((f) => (
+                                  <option key={f.valor} value={f.valor}>
+                                    {f.texto}
+                                  </option>
+                                ))}
+                              </select>
+                              <input value={l.parcelas} onChange={(e) => alterar(i, { parcelas: e.target.value })} inputMode="numeric" className="campo w-14 py-1 text-xs" aria-label="Parcelas" />
+                              <span className="text-xs text-slate-500">x</span>
+                              <input value={l.bonus} onChange={(e) => alterar(i, { bonus: e.target.value })} inputMode="decimal" className="campo w-16 py-1 text-xs" aria-label="Bônus %" />
+                              <span className="text-xs text-slate-500">% bônus</span>
+                              <span className="w-full text-xs text-slate-500">
+                                {comprados > 0 ? (
+                                  <>
+                                    {formatarPontos(pts)} da conta + {formatarPontos(comprados)} comprados = {formatarPontos(total)} transferidos · chegam{' '}
+                                    {formatarPontos(chegam)}
+                                    {valor ? ` · compra a ${formatarCmp((valor / comprados) * 1000)} o milheiro` : ''}
+                                    {' · '}
+                                    <input
+                                      value={l.pontosOutro}
+                                      onChange={(e) => alterar(i, { pontosOutro: e.target.value })}
+                                      placeholder="corrigir"
+                                      inputMode="numeric"
+                                      className="w-20 border-b border-slate-300 bg-transparent text-xs outline-none"
+                                    />
+                                  </>
+                                ) : (
+                                  'Informe os pontos comprados na hora e o valor pago (estão no pedido da Livelo).'
+                                )}
+                              </span>
+                            </div>
+                          )
+                        })()}
+                        {l.incluir && (l.acao === 'TRANSF_ENVIADA' || l.acao === 'TRANSF_RECEBIDA') && (
                           <div className="flex flex-wrap items-center gap-2">
                             <select value={l.outroProgramaId} onChange={(e) => alterar(i, { outroProgramaId: e.target.value })} className="campo w-36 py-1 text-xs">
                               <option value="">{l.acao === 'TRANSF_ENVIADA' ? 'Para qual programa?' : 'De qual programa?'}</option>
@@ -698,12 +767,15 @@ export function ImportadorExtrato({
               {correcoes.length > 0 && <>, <strong>{correcoes.length}</strong> bônus a corrigir</>}
               {resumoPorAcao.length > 0 && ': ' + resumoPorAcao.map(([a, n]) => `${n} ${ACOES[a].toLowerCase()}`).join(', ')}
               {comprasSemValor > 0 && <span className="block text-amber-700">{comprasSemValor} compra(s) sem valor pago.</span>}
+              {imediatasSemCompra > 0 && (
+                <span className="block text-red-700">{imediatasSemCompra} transferência(s) imediata(s) sem os pontos comprados.</span>
+              )}
               {transfSemPrograma > 0 && <span className="block text-red-700">{transfSemPrograma} transferência(s) sem o outro programa.</span>}
             </div>
             <button type="button" onClick={() => { setConferencia(null); setLinhas([]) }} className="btn-secundario" disabled={gravando}>
               Cancelar
             </button>
-            <button type="button" onClick={gravar} className="btn-primario" disabled={gravando || (marcadas.length === 0 && excluir.size === 0 && correcoes.length === 0 && !saldoInicial.lancar) || transfSemPrograma > 0}>
+            <button type="button" onClick={gravar} className="btn-primario" disabled={gravando || (marcadas.length === 0 && excluir.size === 0 && correcoes.length === 0 && !saldoInicial.lancar) || transfSemPrograma > 0 || imediatasSemCompra > 0}>
               {gravando ? 'Gravando...' : 'Gravar lançamentos'}
             </button>
           </div>

@@ -33,6 +33,7 @@ export default async function NovaTransferencia({ searchParams }: { searchParams
             bonusPercentual: '0',
             pontosDestino: '',
             observacao: '',
+            imediata: false,
           }}
         />
       </Cartao>

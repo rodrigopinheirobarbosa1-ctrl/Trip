@@ -2,7 +2,8 @@ import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { listasLancamento, saldosParaFormulario } from '@/lib/dados'
 import { calcularPontosDestino } from '@/lib/carteira'
-import { dataParaCampo, formatarPontos } from '@/lib/formatos'
+import Link from '@/components/link'
+import { dataParaCampo, formatarData, formatarPontos, formatarReais } from '@/lib/formatos'
 import { Cabecalho, Cartao } from '@/components/ui'
 import { BotaoExcluir } from '@/components/excluir'
 import { FormularioTransferencia } from '../formulario'
@@ -10,7 +11,7 @@ import { excluirTransferencia, salvarTransferencia } from '../actions'
 
 export default async function EditarTransferencia({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const t = await db.transferencia.findUnique({ where: { id } })
+  const t = await db.transferencia.findUnique({ where: { id }, include: { compra: true } })
   if (!t) notFound()
   const [listas, saldos] = await Promise.all([
     listasLancamento({ titulares: [t.titularId], programas: [t.origemId, t.destinoId] }),
@@ -23,6 +24,15 @@ export default async function EditarTransferencia({ params }: { params: Promise<
         titulo="Alterar transferência"
         descricao={t.criadoPor ? `Lançada por ${t.criadoPor} em ${t.criadoEm.toLocaleDateString('pt-BR')}` : undefined}
       />
+      {t.compra && (
+        <p className="mb-4 max-w-3xl rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          Transferência imediata, com a compra de{' '}
+          <Link href={`/entradas/${t.compra.id}`} className="font-semibold underline">
+            {formatarPontos(t.compra.pontos)} pontos em {formatarData(t.compra.data)} por {formatarReais(t.compra.valor)}
+          </Link>
+          : esses pontos saem primeiro.
+        </p>
+      )}
       <Cartao className="max-w-3xl">
         <FormularioTransferencia
           acao={salvarTransferencia.bind(null, t.id)}
@@ -41,6 +51,7 @@ export default async function EditarTransferencia({ params }: { params: Promise<
             pontosDestino:
               t.pontosDestino === calcularPontosDestino(t.pontos, t.bonusPercentual) ? '' : formatarPontos(t.pontosDestino),
             observacao: t.observacao ?? '',
+            imediata: Boolean(t.compraId),
           }}
         />
       </Cartao>

@@ -30,6 +30,10 @@ Os simuladores (Bumerangue e CI) ficaram de fora desta versão.
   misturam numa média. A tela **Lotes** mostra cada lote e quanto ainda resta dele.
   Na planilha o "CMP na Operação" das vendas era digitado à mão (uma venda de
   336 mil Smiles estava com CMP R$ 0,00 e aparecia como R$ 5.040 de lucro).
+- **Transferência imediata** ("Pontos + Dinheiro" da Livelo): os pontos comprados na hora para
+  completar a transferência saem primeiro, e o destino recebe o custo real da operação. Na
+  importação do extrato, a linha vira compra + transferência; à mão, marque a caixinha
+  "Transferência imediata" na transferência (lançando a compra antes, em Entradas).
 - **CMP recente**: o painel mostra quanto custou cada milheiro que entrou nos últimos
   30, 90, 180 ou 365 dias — a referência para decidir o preço de venda.
 - **Não dá para gastar pontos que não existem.** Uma venda ou transferência

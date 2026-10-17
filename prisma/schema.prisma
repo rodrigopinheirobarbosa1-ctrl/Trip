@@ -160,24 +160,26 @@ enum FormaPagamento {
 
 /// Pontos que entram: compras, acumulos, bonus. (Planilha: "Lança Entrada Ptos")
 model Entrada {
-  id             String           @id @default(cuid())
-  data           DateTime         @db.Date
-  titularId      String
-  titular        Titular          @relation(fields: [titularId], references: [id], onDelete: Restrict)
-  programaId     String
-  programa       Programa         @relation(fields: [programaId], references: [id], onDelete: Restrict)
-  categoria      CategoriaEntrada @default(COMPRA)
-  pontos         Int
+  id                      String           @id @default(cuid())
+  data                    DateTime         @db.Date
+  titularId               String
+  titular                 Titular          @relation(fields: [titularId], references: [id], onDelete: Restrict)
+  programaId              String
+  programa                Programa         @relation(fields: [programaId], references: [id], onDelete: Restrict)
+  categoria               CategoriaEntrada @default(COMPRA)
+  pontos                  Int
   /// Quanto custou (centavos).
-  valor          Int              @default(0)
-  formaPagamento FormaPagamento   @default(PIX)
-  parcelas       Int              @default(1)
-  cartaoId       String?
-  cartao         Cartao?          @relation(fields: [cartaoId], references: [id], onDelete: SetNull)
-  observacao     String?
-  criadoPor      String?
-  criadoEm       DateTime         @default(now())
-  atualizadoEm   DateTime         @updatedAt
+  valor                   Int              @default(0)
+  formaPagamento          FormaPagamento   @default(PIX)
+  parcelas                Int              @default(1)
+  cartaoId                String?
+  cartao                  Cartao?          @relation(fields: [cartaoId], references: [id], onDelete: SetNull)
+  observacao              String?
+  criadoPor               String?
+  criadoEm                DateTime         @default(now())
+  atualizadoEm            DateTime         @updatedAt
+  /// Transferências imediatas que levaram os pontos desta compra.
+  transferenciasImediatas Transferencia[]  @relation("compraImediata")
 
   @@index([data])
   @@index([titularId, programaId])
@@ -200,6 +202,10 @@ model Transferencia {
   bonusPercentual Float    @default(0)
   /// Pontos que chegam no destino (pontos + bonus).
   pontosDestino   Int
+  /// Transferencia imediata: compra de pontos feita na hora, na origem, para
+  /// completar a transferencia. Os pontos dela saem primeiro (o custo real).
+  compraId        String?
+  compra          Entrada? @relation("compraImediata", fields: [compraId], references: [id], onDelete: SetNull)
   observacao      String?
   criadoPor       String?
   criadoEm        DateTime @default(now())
