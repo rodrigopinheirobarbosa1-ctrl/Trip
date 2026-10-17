@@ -179,3 +179,82 @@ test('linha da companhia aérea com "Pontos <programa>" vira transferência rece
   assert.equal(s[0].acao, 'TRANSF_RECEBIDA')
   assert.equal(s[0].outroProgramaId, 'livelo')
 })
+
+const smiles = (extra: Partial<Parameters<typeof montarSugestoes>[1]> = {}) => ctx({ programaId: 'smiles', ...extra })
+
+test('Smiles: transferência lançada sem bônus e o bônus numa linha à parte (19/05)', () => {
+  const s = montarSugestoes(
+    [
+      l('2026-05-19', 'Transferência de pontos - Maio 26', 'Transferência de pontos', 56000, 1, 'Parceiro: LIVELO S.A. · Bônus: 18/05 WL ate 80%'),
+      l('2026-05-19', 'Pontos Livelo', 'Pontos Livelo', 70000, 1, 'Parceiro: LIVELO S.A.'),
+    ],
+    smiles({ existentes: { ...vazio, recebidas: [recebida('t1', '2026-05-19', 70000, 70000)] } }),
+  )
+  const principal = s.find((x) => x.linha.pontos === 70000)!
+  const bonus = s.find((x) => x.linha.pontos === 56000)!
+  assert.equal(principal.jaLancado, null)
+  assert.equal(principal.corrigirBonus?.pontosDestinoNovo, 126000)
+  assert.equal(principal.corrigirBonus?.bonusNovo, 80)
+  assert.equal(bonus.parteDe, 't1')
+})
+
+test('Smiles: bônus lançado errado (80% no sistema, 70% no extrato)', () => {
+  const s = montarSugestoes(
+    [
+      l('2026-07-28', 'Transf. Pontos + CM - Bônus', 'Transf. Pontos + CM - Bônus Julho', 34300, 1, 'Parceiro: LIVELO S.A.'),
+      l('2026-07-28', 'Pontos Livelo', 'Pontos Livelo', 49000, 1, 'Parceiro: LIVELO S.A.'),
+    ],
+    smiles({ existentes: { ...vazio, recebidas: [recebida('t1', '2026-07-28', 49000, 88200, 'livelo', 80)] } }),
+  )
+  const principal = s.find((x) => x.linha.pontos === 49000)!
+  assert.equal(principal.corrigirBonus?.pontosDestinoNovo, 83300)
+  assert.equal(principal.corrigirBonus?.bonusNovo, 70)
+  assert.equal(s.find((x) => x.linha.pontos === 34300)!.parteDe, 't1')
+})
+
+test('Smiles: pontos + bônus que somam o total lançado ficam como já lançados (07/03)', () => {
+  const s = montarSugestoes(
+    [
+      l('2026-03-07', 'Bônus Transf. Pontos', 'Bônus Transf. Pontos Consumidor - 03/2026', 42000),
+      l('2026-03-07', 'Pontos Livelo', 'Pontos Livelo', 70000),
+    ],
+    smiles({ existentes: { ...vazio, recebidas: [recebida('t1', '2026-03-07', 70000, 112000, 'livelo', 60)] } }),
+  )
+  assert.deepEqual(s.map((x) => [x.jaLancado?.id, x.corrigirBonus, x.parteDe]), [['t1', null, null], ['t1', null, null]])
+})
+
+test('resgate cancelado e devolvido: as duas linhas se anulam; a emissão lançada vai para excluir', () => {
+  const s = montarSugestoes(
+    [
+      { ...l('2026-06-19', 'Passagem aérea', 'Passagem aérea', -120400), localizador: 'IXYIJX' },
+      { ...l('2026-06-19', 'Passagem aérea', 'Passagem aérea', 120400), localizador: 'LZDRFK' },
+      { ...l('2026-06-19', 'Passagem aérea', 'Passagem aérea', -120400), localizador: 'LZDRFK' },
+    ],
+    smiles({ existentes: { ...vazio, saidas: [{ id: 's1', data: new Date('2026-06-19T00:00:00Z'), pontos: 120400 }] } }),
+  )
+  // A primeira casa com a saída lançada; a devolução anula a outra do mesmo localizador.
+  assert.equal(s[0].jaLancado?.id, 's1')
+  assert.equal(s[1].acao, 'IGNORAR')
+  assert.equal(s[2].acao, 'IGNORAR')
+  assert.match(s[1].motivo, /resgate cancelado/)
+})
+
+test('reembolso da Azul anula o resgate do mesmo valor', () => {
+  const s = montarSugestoes(
+    [l('2026-06-27', 'Reembolso', 'Reembolso - Azul', 380000), l('2026-06-27', 'Resgate', 'Resgate - Azul', -380000)],
+    ctx({ programaId: 'azul' }),
+  )
+  assert.deepEqual(s.map((x) => x.acao), ['IGNORAR', 'IGNORAR'])
+})
+
+test('Smiles sem a transferência lançada: pontos viram transferência e o bônus vira bônus', () => {
+  const s = montarSugestoes(
+    [
+      l('2026-08-27', 'Transf. Pontos + CM - Bônus', 'Transf. Pontos + CM - Bônus Agosto', 232000, 1, 'Parceiro: LIVELO S.A. · Bônus: 27/08 WL ate 80%'),
+      l('2026-08-27', 'Pontos Livelo', 'Pontos Livelo', 290000, 1, 'Parceiro: LIVELO S.A.'),
+      l('2026-03-20', 'Pontos Clube Livelo', 'Pontos Clube Livelo', 239000, 1, 'Parceiro: LIVELO S.A.'),
+    ],
+    smiles(),
+  )
+  assert.deepEqual(s.map((x) => [x.acao, x.outroProgramaId]), [['BONUS', null], ['TRANSF_RECEBIDA', 'livelo'], ['TRANSF_RECEBIDA', 'livelo']])
+})

@@ -40,7 +40,7 @@ function linhaInicial(s: Sugestao): Linha {
   const pts = Math.abs(s.linha.pontos)
   return {
     s,
-    incluir: !s.jaLancado && !s.corrigirBonus && s.acao !== 'IGNORAR',
+    incluir: !s.jaLancado && !s.corrigirBonus && !s.parteDe && s.acao !== 'IGNORAR',
     acao: s.acao,
     outroProgramaId: s.outroProgramaId ?? '',
     valor: s.acao === 'COMPRA' && s.valorMilheiro ? centavosParaTexto(Math.round((s.valorMilheiro * pts) / 1000)) : '',
@@ -64,6 +64,8 @@ export function ImportadorExtrato({
 }) {
   const [titularId, setTitularId] = useState('')
   const [programaId, setProgramaId] = useState('')
+  /** Extratos longos (vários anos): importar só daqui em diante. */
+  const [desde, setDesde] = useState('')
   const [progresso, setProgresso] = useState<{ feitas: number; total: number } | null>(null)
   const [erros, setErros] = useState<string[]>([])
   const [conferencia, setConferencia] = useState<Conferencia | null>(null)
@@ -110,7 +112,7 @@ export function ImportadorExtrato({
       while (proxima < paginas.length) {
         const n = proxima++
         try {
-          const r = await lerPagina({ programaId, pagina: n + 1, dados: paginas[n].dados, tipo: paginas[n].tipo })
+          const r = await lerPagina({ programaId, desde: desde || null, pagina: n + 1, dados: paginas[n].dados, tipo: paginas[n].tipo })
           if (r.ok) {
             lidas[n] = r.linhas
             saldos[n] = r.saldoExibido
@@ -287,6 +289,14 @@ export function ImportadorExtrato({
               </select>
             </label>
           </div>
+          <label className="block sm:w-64">
+            <span className="rotulo">Importar a partir de (opcional)</span>
+            <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="campo" disabled={lendo} />
+            <span className="mt-1 block text-xs text-slate-400">
+              Para extratos de vários anos (como o PDF da Smiles): só as movimentações desta data em diante. O que veio antes entra no
+              acerto do saldo anterior.
+            </span>
+          </label>
           <label className="block">
             <span className="rotulo">Prints, PDF ou Word com os prints</span>
             <input
@@ -572,9 +582,16 @@ export function ImportadorExtrato({
                         <span className="font-medium">{l.s.linha.descricao}</span>
                         <span className="block text-xs text-slate-500">
                           {l.s.linha.operacao}
+                          {l.s.linha.localizador && ` · localizador ${l.s.linha.localizador}`}
                           {l.s.linha.observacao && ` · ${l.s.linha.observacao}`}
                         </span>
-                        {l.s.corrigirBonus ? (
+                        {l.s.parteDe ? (
+                          <span className="mt-1 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200">
+                            {corrigir.has(l.s.parteDe)
+                              ? 'Bônus da transferência: entra na correção do bônus (linha acima ou abaixo)'
+                              : 'Bônus de uma transferência cuja correção você desmarcou: marque para lançar como bônus, se for o caso'}
+                          </span>
+                        ) : l.s.corrigirBonus ? (
                           <label className="mt-1 flex items-start gap-2 rounded-lg bg-amber-50 px-2 py-1 text-xs text-amber-800 ring-1 ring-amber-200">
                             <input
                               type="checkbox"

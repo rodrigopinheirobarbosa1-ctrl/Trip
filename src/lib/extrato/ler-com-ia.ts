@@ -30,7 +30,11 @@ const Resposta = z.object({
       operacao: z.string().describe('tipo da operação como escrito (Acúmulo, Bônus, Resgate, Transferência...)'),
       descricao: z.string().describe('parceiro ou descrição como escrito'),
       pontos: z.number().int().describe('quantidade de pontos: positiva quando entra, negativa quando sai'),
-      observacao: z.string().nullable().describe('observação da linha, se houver'),
+      observacao: z
+        .string()
+        .nullable()
+        .describe('observação da linha: parceiro, texto do bônus/promoção e outros detalhes úteis, se houver'),
+      localizador: z.string().nullable().describe('passagens: localizador da reserva (ex.: "QIHEFV"), se aparecer'),
     }),
   ),
 })
@@ -41,7 +45,9 @@ Transcreva cada movimentação de pontos que aparece, exatamente uma vez por lin
 
 Não são movimentações: botões e textos de interface (por exemplo "Turbinar meus pontos", "Como funciona", paginação), saldos, "pontos a expirar" e "pontos a receber". Se um número estiver ilegível, não invente: deixe a linha de fora.
 
-O saldo vai em saldoExibido: o total de pontos ou milhas disponíveis agora ("Saldo", "Você tem", "Pontos disponíveis", "Saldo de milhas"...). Alguns programas mostram o saldo numa tela separada, sem movimentações: essa tela também vale (eExtrato = true, saldoExibido com o saldo e nenhuma linha). Só use eExtrato = false para imagens que não são de um programa de pontos.`
+O saldo vai em saldoExibido: o total de pontos ou milhas disponíveis agora ("Saldo", "Você tem", "Pontos disponíveis", "Saldo de milhas"...). Alguns programas mostram o saldo numa tela separada, sem movimentações: essa tela também vale (eExtrato = true, saldoExibido com o saldo e nenhuma linha). Só use eExtrato = false para imagens que não são de um programa de pontos.
+
+Extratos em PDF (como o da Smiles) trazem mais detalhes em cada movimentação. Transcreva UMA linha por movimentação (cada "Descrição"), com o total de milhas dela; os "Detalhes da transação" (tarifas, taxas de embarque, bilhetes) já estão somados nesse total e não viram linhas. A data é a do dia da movimentação. Em observacao, junte o parceiro e o texto do bônus quando houver (ex.: "Parceiro: LIVELO S.A. · Bônus: 18/05 WL ate 80%"). Em passagens, o ID de 6 letras é o localizador. A devolução de uma passagem cancelada aparece como passagem com milhas positivas: transcreva assim mesmo, com o sinal positivo.`
 
 /** Só em desenvolvimento: lê as respostas de um arquivo, para testar a tela sem gastar com a IA. */
 function respostaDeTeste(pagina: number): z.infer<typeof Resposta> | null {
@@ -60,6 +66,8 @@ export type ResultadoLeitura =
   | { ok: false; erro: string }
 
 export async function lerPaginaDoExtrato(arquivo: {
+  /** "2026-01-01": transcrever só daí em diante (extratos longos). */
+  desde?: string | null
   pagina: number
   /** Conteúdo em base64. */
   dados: string
@@ -68,7 +76,13 @@ export async function lerPaginaDoExtrato(arquivo: {
 }): Promise<ResultadoLeitura> {
   const teste = respostaDeTeste(arquivo.pagina)
   if (teste) {
-    return { ok: true, saldoExibido: teste.saldoExibido, linhas: teste.linhas.map((l) => ({ ...l, pagina: arquivo.pagina })) }
+    return {
+      ok: true,
+      saldoExibido: teste.saldoExibido,
+      linhas: teste.linhas
+        .filter((l) => !arquivo.desde || l.data >= arquivo.desde)
+        .map((l) => ({ ...l, localizador: l.localizador ?? null, pagina: arquivo.pagina })),
+    }
   }
   if (!process.env.ANTHROPIC_API_KEY) {
     return { ok: false, erro: 'A leitura automática ainda não foi configurada (falta a chave ANTHROPIC_API_KEY na Vercel).' }
@@ -83,7 +97,8 @@ export async function lerPaginaDoExtrato(arquivo: {
   try {
     const resposta = await client.beta.messages.parse({
       model: MODELO,
-      max_tokens: 16000,
+      // Extratos de vários anos geram respostas longas; acima de ~21 mil o SDK exige streaming.
+      max_tokens: 20000,
       // Se o modelo recusar por engano (filtros de segurança), o pedido é
       // refeito automaticamente no modelo alternativo recomendado.
       betas: ['server-side-fallback-2026-07-01'],
@@ -93,7 +108,15 @@ export async function lerPaginaDoExtrato(arquivo: {
       messages: [
         {
           role: 'user',
-          content: [conteudo, { type: 'text', text: `Extrato do programa ${arquivo.programa}. Transcreva as movimentações.` }],
+          content: [
+            conteudo,
+            {
+              type: 'text',
+              text:
+                `Extrato do programa ${arquivo.programa}. Transcreva as movimentações` +
+                (arquivo.desde ? ` de ${arquivo.desde.split('-').reverse().join('/')} em diante (ignore as anteriores).` : '.'),
+            },
+          ],
         },
       ],
     })
@@ -115,6 +138,7 @@ export async function lerPaginaDoExtrato(arquivo: {
       saldoExibido: lido.saldoExibido,
       linhas: lido.linhas
         .filter((l) => /^\d{4}-\d{2}-\d{2}$/.test(l.data) && Number.isInteger(l.pontos) && l.pontos !== 0)
+        .filter((l) => !arquivo.desde || l.data >= arquivo.desde)
         .map((l) => ({ ...l, pagina: arquivo.pagina })),
     }
   } catch (e) {
