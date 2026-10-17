@@ -16,8 +16,14 @@ import type { LinhaLida } from './sugestao'
 const MODELO = 'claude-opus-5-5'
 
 const Resposta = z.object({
-  eExtrato: z.boolean().describe('false se a imagem não mostra um extrato de movimentações de pontos/milhas'),
-  saldoExibido: z.number().int().nullable().describe('saldo total de pontos mostrado na tela, se aparecer'),
+  eExtrato: z
+    .boolean()
+    .describe('false se a imagem não é de um programa de pontos/milhas (nem extrato de movimentações, nem tela com o saldo)'),
+  saldoExibido: z
+    .number()
+    .int()
+    .nullable()
+    .describe('saldo atual de pontos/milhas disponíveis mostrado na tela, se aparecer (não "a expirar" nem "a receber")'),
   linhas: z.array(
     z.object({
       data: z.string().describe('data da movimentação no formato AAAA-MM-DD'),
@@ -33,7 +39,9 @@ const INSTRUCOES = `Você lê extratos de programas de fidelidade brasileiros (L
 
 Transcreva cada movimentação de pontos que aparece, exatamente uma vez por linha visível, na ordem da tela. Datas brasileiras (dd/mm/aaaa) devem virar AAAA-MM-DD; se o ano não aparecer na linha, deduza pelo contexto da tela. Pontos usam ponto como separador de milhar ("250.000" = 250000). O sinal vem da tela: "+" ou verde é entrada; "-" ou vermelho é saída.
 
-Não são movimentações: botões e textos de interface (por exemplo "Turbinar meus pontos", "Como funciona", paginação), saldos, "pontos a expirar" e "pontos a receber". Se um número estiver ilegível, não invente: deixe a linha de fora.`
+Não são movimentações: botões e textos de interface (por exemplo "Turbinar meus pontos", "Como funciona", paginação), saldos, "pontos a expirar" e "pontos a receber". Se um número estiver ilegível, não invente: deixe a linha de fora.
+
+O saldo vai em saldoExibido: o total de pontos ou milhas disponíveis agora ("Saldo", "Você tem", "Pontos disponíveis", "Saldo de milhas"...). Alguns programas mostram o saldo numa tela separada, sem movimentações: essa tela também vale (eExtrato = true, saldoExibido com o saldo e nenhuma linha). Só use eExtrato = false para imagens que não são de um programa de pontos.`
 
 /** Só em desenvolvimento: lê as respostas de um arquivo, para testar a tela sem gastar com a IA. */
 function respostaDeTeste(pagina: number): z.infer<typeof Resposta> | null {
@@ -98,7 +106,8 @@ export async function lerPaginaDoExtrato(arquivo: {
     }
     const lido = resposta.parsed_output
     if (!lido) return { ok: false, erro: `Não consegui interpretar a página ${arquivo.pagina}. Tente de novo.` }
-    if (!lido.eExtrato) {
+    // Uma tela só com o saldo vale, mesmo que a IA não a considere extrato.
+    if (!lido.eExtrato && lido.saldoExibido === null) {
       return { ok: false, erro: `A página ${arquivo.pagina} não parece ser um extrato de pontos.` }
     }
     return {

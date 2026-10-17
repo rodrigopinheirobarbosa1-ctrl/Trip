@@ -113,3 +113,52 @@ test('transferência para o grupo da família vira outra saída', () => {
   const s = montarSugestoes([l('2025-12-15', 'Pontos Transferidos', 'Livelo - grupo de transferência', -60000)], ctx())
   assert.equal(s[0].acao, 'OUTRA_SAIDA')
 })
+
+const recebida = (id: string, data: string, pontos: number, pontosDestino: number, origemId = 'livelo', bonusPercentual = 0) => ({
+  id, data: new Date(`${data}T00:00:00Z`), pontos, pontosDestino, origemId, bonusPercentual,
+})
+
+test('transferência já lançada sem o bônus: sugere corrigir o bônus', () => {
+  const s = montarSugestoes([l('2026-06-22', 'Transferência', 'Livelo', 95000)], ctx({
+    programaId: 'azul',
+    existentes: { ...vazio, recebidas: [recebida('t1', '2026-06-22', 50000, 50000)] },
+  }))
+  assert.equal(s[0].jaLancado, null)
+  assert.deepEqual(s[0].corrigirBonus, {
+    id: 't1', data: '2026-06-22', origemId: 'livelo', pontos: 50000,
+    bonusAtual: 0, pontosDestinoAtual: 50000, bonusNovo: 90, pontosDestinoNovo: 95000,
+  })
+  assert.equal(s[0].acao, 'TRANSF_RECEBIDA')
+})
+
+test('extrato com a transferência e o bônus em duas linhas: já lançado, nada a corrigir', () => {
+  const s = montarSugestoes(
+    [l('2026-06-22', 'Transferência', 'Livelo', 50000), l('2026-06-22', 'Bônus', 'Bônus transferência Livelo', 45000)],
+    ctx({ programaId: 'azul', existentes: { ...vazio, recebidas: [recebida('t1', '2026-06-22', 50000, 95000, 'livelo', 90)] } }),
+  )
+  assert.equal(s[0].jaLancado?.id, 't1')
+  assert.equal(s[1].jaLancado?.id, 't1')
+  assert.equal(s[0].corrigirBonus, null)
+  assert.equal(s[1].corrigirBonus, null)
+})
+
+test('não sugere corrigir transferência de outro programa, longe da data ou já casada', () => {
+  const s = montarSugestoes(
+    [
+      l('2026-06-22', 'Transferência', 'Livelo', 95000),
+      l('2026-06-22', 'Acúmulo', 'Compra no cartão', 3000),
+      l('2026-07-10', 'Transferência', 'Smiles', 20000),
+    ],
+    ctx({
+      programaId: 'azul',
+      existentes: {
+        ...vazio,
+        recebidas: [
+          recebida('t1', '2026-06-22', 50000, 50000, 'smiles'), // cita Livelo, mas veio da Smiles
+          recebida('t2', '2026-06-01', 10000, 10000, 'smiles'), // data longe
+        ],
+      },
+    }),
+  )
+  assert.deepEqual(s.map((x) => x.corrigirBonus), [null, null, null])
+})

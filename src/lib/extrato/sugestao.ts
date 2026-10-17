@@ -7,6 +7,9 @@
  * Para cada linha:
  *  1. procura um lançamento que já existe (mesma pessoa e programa, mesma
  *     quantidade de pontos, data até 3 dias de diferença), para não duplicar;
+ *     Se não achar, mas houver uma transferência recebida na mesma época que
+ *     parece ser esta linha com outro total (o bônus ficou errado ou de fora,
+ *     comum no que veio da planilha), sugere corrigir o bônus dela;
  *  2. sugere o tipo: primeiro pela regra que a pessoa já usou para uma linha
  *     igual; se não houver, pelo texto (bônus, compra, resgate para outro
  *     programa...).
@@ -55,11 +58,30 @@ export type Existentes = {
   /** Transferências que saíram deste programa. */
   enviadas: { id: string; data: Date; pontos: number }[]
   /** Transferências que chegaram neste programa. */
-  recebidas: { id: string; data: Date; pontosDestino: number }[]
+  recebidas: { id: string; data: Date; pontos: number; pontosDestino: number; origemId: string; bonusPercentual: number }[]
   saidas: { id: string; data: Date; pontos: number }[]
 }
 
 export type JaLancado = { tipo: 'ENTRADA' | 'TRANSFERENCIA' | 'SAIDA'; id: string; data: string }
+
+/** Transferência recebida que é esta linha, mas com outro total: corrigir o bônus. */
+export type CorrecaoBonus = {
+  id: string
+  data: string
+  origemId: string
+  /** Pontos que saíram da origem (não mudam). */
+  pontos: number
+  bonusAtual: number
+  pontosDestinoAtual: number
+  bonusNovo: number
+  /** Os pontos da linha do extrato. */
+  pontosDestinoNovo: number
+}
+
+/** Bônus (%) que faz `pontos` virar `pontosDestino`, com duas casas. */
+export function bonusQueResulta(pontos: number, pontosDestino: number): number {
+  return Math.round((pontosDestino / pontos - 1) * 10000) / 100
+}
 
 export type Sugestao = {
   linha: LinhaLida
@@ -70,6 +92,7 @@ export type Sugestao = {
   valorMilheiro: number | null
   bonusPercentual: number | null
   jaLancado: JaLancado | null
+  corrigirBonus: CorrecaoBonus | null
   /** Por que esta sugestão (mostrado na tela). */
   motivo: string
 }
@@ -206,24 +229,83 @@ export function montarSugestoes(
     return melhor
   }
 
-  return linhas.map((l) => {
-    const chave = chaveDaLinha(l)
-    let jaLancado: JaLancado | null = null
+  // 1ª passada: o que já está lançado exatamente como no extrato.
+  const lancados: (JaLancado | null)[] = linhas.map((l) => {
     if (l.pontos >= 0) {
       const e = casar(contexto.existentes.entradas, (x) => x.pontos, l)
       const t = e ? null : casar(contexto.existentes.recebidas, (x) => x.pontosDestino, l)
       const achado = e ?? t
-      if (achado) {
-        usados.add(achado.id)
-        jaLancado = { tipo: e ? 'ENTRADA' : 'TRANSFERENCIA', id: achado.id, data: achado.data.toISOString().slice(0, 10) }
-      }
-    } else {
-      const s = casar(contexto.existentes.saidas, (x) => x.pontos, l)
-      const t = s ? null : casar(contexto.existentes.enviadas, (x) => x.pontos, l)
-      const achado = s ?? t
-      if (achado) {
-        usados.add(achado.id)
-        jaLancado = { tipo: s ? 'SAIDA' : 'TRANSFERENCIA', id: achado.id, data: achado.data.toISOString().slice(0, 10) }
+      if (!achado) return null
+      usados.add(achado.id)
+      return { tipo: e ? 'ENTRADA' : 'TRANSFERENCIA', id: achado.id, data: achado.data.toISOString().slice(0, 10) }
+    }
+    const s = casar(contexto.existentes.saidas, (x) => x.pontos, l)
+    const t = s ? null : casar(contexto.existentes.enviadas, (x) => x.pontos, l)
+    const achado = s ?? t
+    if (!achado) return null
+    usados.add(achado.id)
+    return { tipo: s ? 'SAIDA' : 'TRANSFERENCIA', id: achado.id, data: achado.data.toISOString().slice(0, 10) }
+  })
+
+  // 2ª passada: entrada sem par que é uma transferência recebida com outro total.
+  // Só depois de todos os pares exatos, para não roubar o par de outra linha.
+  const correcoes: (CorrecaoBonus | null)[] = linhas.map(() => null)
+  linhas.forEach((l, n) => {
+    if (lancados[n] || l.pontos <= 0) return
+    const d = dataDe(l.data).getTime()
+    const tudo = normalizar(`${l.operacao} ${l.descricao} ${l.observacao ?? ''}`)
+    const citado = programaCitado(`${l.descricao} ${l.observacao ?? ''}`, contexto.programas, contexto.programaId)
+    let melhor: Existentes['recebidas'][number] | null = null
+    let melhorDif = Infinity
+    for (const t of contexto.existentes.recebidas) {
+      if (usados.has(t.id) || t.pontos <= 0 || t.pontosDestino === l.pontos) continue
+      const dif = Math.abs(t.data.getTime() - d)
+      if (dif > 3 * DIA || dif >= melhorDif) continue
+      // Mesmo programa de origem citado, ou um texto de transferência sem citar outro.
+      const parece = citado === t.origemId || (citado === null && /transf|resgate|conversao|recebid|parceir/.test(tudo))
+      // Bônus entre -50% e +400%: além disso é outra coisa.
+      const razao = l.pontos / t.pontos
+      if (!parece || razao < 0.5 || razao > 5) continue
+      melhor = t
+      melhorDif = dif
+    }
+    if (!melhor) return
+    usados.add(melhor.id)
+    const t = melhor
+    // O extrato pode mostrar a transferência em duas linhas (pontos + bônus) que,
+    // somadas, dão o total já lançado: aí não há nada a corrigir.
+    const par = linhas.findIndex(
+      (x, k) =>
+        k !== n && !lancados[k] && !correcoes[k] && x.pontos > 0 && x.pontos + l.pontos === t.pontosDestino &&
+        Math.abs(dataDe(x.data).getTime() - t.data.getTime()) <= 3 * DIA,
+    )
+    if (par >= 0) {
+      const jaLancado = { tipo: 'TRANSFERENCIA' as const, id: t.id, data: t.data.toISOString().slice(0, 10) }
+      lancados[n] = jaLancado
+      lancados[par] = jaLancado
+      return
+    }
+    correcoes[n] = {
+      id: melhor.id,
+      data: melhor.data.toISOString().slice(0, 10),
+      origemId: melhor.origemId,
+      pontos: melhor.pontos,
+      bonusAtual: melhor.bonusPercentual,
+      pontosDestinoAtual: melhor.pontosDestino,
+      bonusNovo: bonusQueResulta(melhor.pontos, l.pontos),
+      pontosDestinoNovo: l.pontos,
+    }
+  })
+
+  return linhas.map((l, n) => {
+    const chave = chaveDaLinha(l)
+    const jaLancado = lancados[n]
+    const corrigirBonus = correcoes[n]
+    if (corrigirBonus) {
+      return {
+        linha: l, chave, acao: 'TRANSF_RECEBIDA' as const, outroProgramaId: corrigirBonus.origemId,
+        valorMilheiro: null, bonusPercentual: corrigirBonus.bonusNovo, jaLancado, corrigirBonus,
+        motivo: 'transferência já lançada com outro bônus',
       }
     }
 
@@ -238,10 +320,11 @@ export function montarSugestoes(
         valorMilheiro: regra.valorMilheiro,
         bonusPercentual: regra.bonusPercentual,
         jaLancado,
+        corrigirBonus,
         motivo: 'como você classificou da última vez',
       }
     }
     const s = sugerirPeloTexto(l, contexto.programas, contexto.programaId)
-    return { linha: l, chave, ...s, valorMilheiro: null, bonusPercentual: null, jaLancado }
+    return { linha: l, chave, ...s, valorMilheiro: null, bonusPercentual: null, jaLancado, corrigirBonus }
   })
 }
