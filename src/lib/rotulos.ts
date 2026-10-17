@@ -10,8 +10,9 @@ export const TIPOS_PROGRAMA = {
 
 export const CATEGORIAS_ENTRADA = {
   COMPRA: 'Compra',
-  ACUMULO: 'Acúmulo',
-  BONUS: 'Bônus',
+  ACUMULO: 'Acúmulo (cartão, voo: sem custo)',
+  BONUS: 'Bônus do programa (sem custo)',
+  PARCEIRO: 'Acúmulo em parceiro (custo atribuído)',
   SALDO_INICIAL: 'Saldo inicial',
   AJUSTE: 'Ajuste',
 } as const

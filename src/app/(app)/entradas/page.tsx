@@ -4,6 +4,7 @@ import { anosDisponiveis, carregarNomes } from '@/lib/dados'
 import { intervaloDatas, lerFiltros } from '@/lib/filtros'
 import { formatarCmp, formatarData, formatarPontos } from '@/lib/formatos'
 import { CATEGORIAS_ENTRADA, FORMAS_PAGAMENTO, rotulo } from '@/lib/rotulos'
+import { custoDaEntrada } from '@/lib/custo-atribuido'
 import { BarraFiltros } from '@/components/filtros'
 import { Cabecalho, Cartao, Dinheiro, LinkBotao, Tabela, Td, Th, Vazio } from '@/components/ui'
 
@@ -22,15 +23,22 @@ export default async function Entradas({ searchParams }: { searchParams: Promise
     include: { titular: true, programa: true, cartao: true },
     orderBy: [{ data: 'desc' }, { criadoEm: 'desc' }],
   })
+  // Custo de cada entrada: o pago ou, nos parceiros, o atribuído (que não sai do caixa).
+  const custo = (e: (typeof entradas)[number]) => custoDaEntrada(e, e.programa.custoParceiroMilheiro)
   const totalPontos = entradas.reduce((s, e) => s + e.pontos, 0)
-  const totalValor = entradas.reduce((s, e) => s + e.valor, 0)
+  const totalValor = entradas.reduce((s, e) => s + custo(e).valor, 0)
 
   return (
     <>
       <Cabecalho
         titulo="Entradas de pontos"
         descricao="Compras, acúmulos, bônus e saldos iniciais. (Planilha: Lança Entrada Ptos)"
-        acoes={<LinkBotao href="/entradas/nova" variante="primario">+ Nova entrada</LinkBotao>}
+        acoes={
+          <>
+            <LinkBotao href="/entradas/classificar">Classificar acúmulos</LinkBotao>
+            <LinkBotao href="/entradas/nova" variante="primario">+ Nova entrada</LinkBotao>
+          </>
+        }
       />
       <BarraFiltros filtros={filtros} titulares={nomes.titulares} programas={nomes.programas} anos={anos} />
       <Cartao>
@@ -66,9 +74,10 @@ export default async function Entradas({ searchParams }: { searchParams: Promise
                     {formatarPontos(e.pontos)}
                   </Td>
                   <Td alinhar="direita">
-                    <Dinheiro centavos={e.valor} />
+                    <Dinheiro centavos={custo(e).valor} />
+                    {custo(e).atribuido && <span className="block text-xs text-slate-400">atribuído</span>}
                   </Td>
-                  <Td alinhar="direita">{e.pontos > 0 && e.valor > 0 ? formatarCmp((e.valor / e.pontos) * 1000) : '-'}</Td>
+                  <Td alinhar="direita">{e.pontos > 0 && custo(e).valor > 0 ? formatarCmp((custo(e).valor / e.pontos) * 1000) : '-'}</Td>
                   <Td>
                     {e.formaPagamento === 'SEM_DESEMBOLSO' ? (
                       <span className="text-slate-400">-</span>

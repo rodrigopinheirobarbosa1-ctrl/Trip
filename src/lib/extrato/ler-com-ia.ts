@@ -62,7 +62,7 @@ export function iaConfigurada(): boolean {
 }
 
 export type ResultadoLeitura =
-  | { ok: true; linhas: LinhaLida[]; saldoExibido: number | null }
+  | { ok: true; linhas: LinhaLida[]; saldoExibido: number | null; /** Lido sem IA (PDF de formato conhecido). */ semIa?: boolean }
   | { ok: false; erro: string }
 
 export async function lerPaginaDoExtrato(arquivo: {

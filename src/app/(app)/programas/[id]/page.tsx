@@ -25,6 +25,14 @@ export default async function EditarPrograma({ params }: { params: Promise<{ id:
             modo="decimal"
             valor={p.valorMilheiro !== null ? centavosParaCampo(p.valorMilheiro) : ''}
           />
+          <Texto
+            rotulo="Custo atribuído aos pontos de parceiros (R$ por milheiro, opcional)"
+            nome="custoParceiroMilheiro"
+            modo="decimal"
+            placeholder="Ex.: 31,00"
+            valor={p.custoParceiroMilheiro !== null ? centavosParaCampo(p.custoParceiroMilheiro) : ''}
+            dica="Pontos ganhos em compras de parceiros (Uber, Amazon, Insider...) lançados como “Acúmulo em parceiro” sem valor recebem este custo. Não sai do caixa. Bônus do programa e pontos do cartão continuam sem custo."
+          />
           <Caixa rotulo="Ativo (aparece nas listas de lançamento)" nome="ativo" marcado={p.ativo} />
           <BotaoEnviar>Salvar</BotaoEnviar>
         </Formulario>

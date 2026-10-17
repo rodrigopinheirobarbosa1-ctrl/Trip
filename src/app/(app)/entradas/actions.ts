@@ -31,8 +31,9 @@ function lerEntrada(dados: FormData) {
   const pontos = pontosObrigatorio(dados, 'pontos', 'Quantidade de pontos', categoria === 'AJUSTE')
   const valor = centavosOpcional(dados, 'valor', 'Valor pago')
   let formaPagamento = opcao(dados, 'formaPagamento', 'Forma de pagamento', FORMAS)
-  // Sem valor pago não há desembolso, seja qual for a forma escolhida.
-  if (valor === 0) formaPagamento = 'SEM_DESEMBOLSO'
+  // Sem valor pago não há desembolso, seja qual for a forma escolhida. No parceiro, o
+  // valor é um custo atribuído: também não sai do caixa.
+  if (valor === 0 || categoria === 'PARCEIRO') formaPagamento = 'SEM_DESEMBOLSO'
   if (valor > 0 && formaPagamento === 'SEM_DESEMBOLSO') {
     throw new ErroFormulario('Há valor pago: escolha a forma de pagamento (PIX, cartão...).')
   }

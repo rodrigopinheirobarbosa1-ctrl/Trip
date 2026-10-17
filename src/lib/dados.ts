@@ -3,6 +3,7 @@ import { db } from './db'
 import { calcularCarteira, calcularCmpRecente, chavePosicao, conferirSaldos, type Movimentos } from './carteira'
 import { formatarData, formatarPontos } from './formatos'
 import type { ItemCaixa } from './fluxo'
+import { custoDaEntrada } from './custo-atribuido'
 
 /**
  * Lê todos os lançamentos de pontos do banco no formato da carteira.
@@ -10,7 +11,7 @@ import type { ItemCaixa } from './fluxo'
  * é rápido e garante que nada fica desatualizado.
  */
 export async function carregarMovimentos(): Promise<Movimentos> {
-  const [entradas, transferencias, saidas] = await Promise.all([
+  const [entradas, transferencias, saidas, programas] = await Promise.all([
     db.entrada.findMany({
       select: { id: true, data: true, titularId: true, programaId: true, pontos: true, valor: true, categoria: true, criadoEm: true },
     }),
@@ -23,9 +24,16 @@ export async function carregarMovimentos(): Promise<Movimentos> {
     db.saida.findMany({
       select: { id: true, data: true, titularId: true, programaId: true, pontos: true, criadoEm: true },
     }),
+    db.programa.findMany({ select: { id: true, custoParceiroMilheiro: true } }),
   ])
+  // Pontos de parceiros sem valor próprio recebem o custo atribuído do programa.
+  const custoParceiro = new Map(programas.map((p) => [p.id, p.custoParceiroMilheiro]))
   return {
-    entradas: entradas.map((e) => ({ ...e, ordem: e.criadoEm.getTime() })),
+    entradas: entradas.map((e) => ({
+      ...e,
+      valor: custoDaEntrada(e, custoParceiro.get(e.programaId)).valor,
+      ordem: e.criadoEm.getTime(),
+    })),
     transferencias: transferencias.map((t) => ({ ...t, ordem: t.criadoEm.getTime() })),
     saidas: saidas.map((s) => ({ ...s, ordem: s.criadoEm.getTime() })),
   }
@@ -132,7 +140,11 @@ export async function listasLancamento(manter: { titulares?: string[]; programas
   const ou = (ids?: string[]) => [{ ativo: true }, ...(ids?.length ? [{ id: { in: ids } }] : [])]
   const [titulares, programas, cartoes] = await Promise.all([
     db.titular.findMany({ where: { OR: ou(manter.titulares) }, orderBy: { nome: 'asc' }, select: { id: true, nome: true } }),
-    db.programa.findMany({ where: { OR: ou(manter.programas) }, orderBy: { nome: 'asc' }, select: { id: true, nome: true } }),
+    db.programa.findMany({
+      where: { OR: ou(manter.programas) },
+      orderBy: { nome: 'asc' },
+      select: { id: true, nome: true, custoParceiroMilheiro: true },
+    }),
     db.cartao.findMany({ where: { OR: ou(manter.cartoes) }, orderBy: { nome: 'asc' }, select: { id: true, nome: true } }),
   ])
   return { titulares, programas, cartoes }

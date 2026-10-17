@@ -11,6 +11,7 @@ import { detalharEntrada, detalharSaida, detalharTransferencia } from '@/lib/det
 import { carregarMovimentos, validarSaldos } from '@/lib/dados'
 import { calcularCarteira, calcularPontosDestino, chavePosicao, type Movimentos } from '@/lib/carteira'
 import { lerPaginaDoExtrato, type ResultadoLeitura } from '@/lib/extrato/ler-com-ia'
+import { lerPdfSemIa } from '@/lib/extrato/pdf-texto'
 import { ACOES, bonusQueResulta, juntarPaginas, montarSugestoes, type LinhaLida, type Sugestao } from '@/lib/extrato/sugestao'
 
 const TIPOS_ARQUIVO = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const
@@ -31,6 +32,11 @@ export async function lerPagina(entrada: {
   const programa = await db.programa.findUnique({ where: { id: entrada.programaId } })
   if (!programa) return { ok: false, erro: 'Programa não encontrado.' }
   const desde = entrada.desde && /^\d{4}-\d{2}-\d{2}$/.test(entrada.desde) ? entrada.desde : null
+  // PDF com texto num formato conhecido (o extrato da Smiles): lido aqui, sem IA e sem custo.
+  if (tipo === 'application/pdf') {
+    const semIa = await lerPdfSemIa(entrada.dados, entrada.pagina)
+    if (semIa) return { ok: true, saldoExibido: null, semIa: true, linhas: semIa.filter((l) => !desde || l.data >= desde) }
+  }
   return lerPaginaDoExtrato({ pagina: entrada.pagina, dados: entrada.dados, tipo, programa: programa.nome, desde })
 }
 
@@ -55,6 +61,8 @@ export type Conferencia = {
   /** Saldo do sistema no dia anterior à primeira linha do extrato. */
   saldoAntesDoPeriodo: number
   foraDoExtrato: ForaDoExtrato[]
+  /** Custo atribuído padrão do programa aos pontos de parceiros (centavos por milheiro). */
+  custoParceiroMilheiro: number | null
 }
 
 /** Junta as páginas lidas e sugere o que fazer com cada linha. */
@@ -68,7 +76,7 @@ export async function montarConferencia(entrada: {
   const linhas = juntarPaginas(entrada.paginas)
 
   const [programas, regras, entradas, enviadas, recebidas, saidas, movimentos] = await Promise.all([
-    db.programa.findMany({ orderBy: { nome: 'asc' }, select: { id: true, nome: true } }),
+    db.programa.findMany({ orderBy: { nome: 'asc' }, select: { id: true, nome: true, custoParceiroMilheiro: true } }),
     db.regraExtrato.findMany({ where: { programaId } }),
     db.entrada.findMany({ where: { titularId, programaId }, select: { id: true, data: true, pontos: true, categoria: true, observacao: true } }),
     db.transferencia.findMany({
@@ -126,6 +134,7 @@ export async function montarConferencia(entrada: {
     temLancamentoAntes: antes(entradas) || antes(enviadas) || antes(recebidas) || antes(saidas),
     saldoAntesDoPeriodo: antesDoPeriodo.posicoes.get(chave)?.pontos ?? 0,
     foraDoExtrato,
+    custoParceiroMilheiro: programas.find((p) => p.id === programaId)?.custoParceiroMilheiro ?? null,
   }
 }
 
@@ -210,6 +219,7 @@ export async function gravarExtrato(entrada: {
         break
       case 'COMPRA':
       case 'ACUMULO':
+      case 'PARCEIRO':
       case 'BONUS': {
         if (!entra) return { erro: `Linha de ${i.linha.data} (${observacao(i)}) é de saída e não pode ser entrada.` }
         const paga = i.acao === 'COMPRA' && i.valor > 0
@@ -219,7 +229,8 @@ export async function gravarExtrato(entrada: {
           programaId,
           categoria: i.acao,
           pontos: pts,
-          valor: i.acao === 'COMPRA' ? i.valor : 0,
+          // Parceiro: custo atribuído (sem desembolso); vazio usa o padrão do programa.
+          valor: i.acao === 'COMPRA' || i.acao === 'PARCEIRO' ? i.valor : 0,
           formaPagamento: paga ? i.formaPagamento : 'SEM_DESEMBOLSO',
           parcelas: paga ? i.parcelas : 1,
           observacao: observacao(i),
@@ -421,7 +432,7 @@ export async function gravarExtrato(entrada: {
         acao: i.acao,
         outroProgramaId: i.outroProgramaId,
         valorMilheiro:
-          i.acao === 'COMPRA' && i.valor > 0
+          (i.acao === 'COMPRA' || i.acao === 'PARCEIRO') && i.valor > 0
             ? Math.round((i.valor / pts) * 1000)
             : i.acao === 'TRANSF_IMEDIATA' && i.valor > 0 && i.pontosComprados > 0
               ? Math.round((i.valor / i.pontosComprados) * 1000)

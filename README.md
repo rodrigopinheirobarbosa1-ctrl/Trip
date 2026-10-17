@@ -14,7 +14,7 @@ acessam ao mesmo tempo, cada uma com o seu login.
 | E\|S Financeiras | **Entradas e saídas avulsas** |
 | Fluxo de Caixa | **Fluxo de caixa** — mês a mês, com as parcelas |
 | Dashboard / Resumo | **Painel** — todas as pessoas juntas ou uma de cada vez |
-| — | **Importar extrato** — a IA lê os prints/PDF/Word do extrato de um programa; você confere e grava |
+| — | **Importar extrato** — a IA lê os prints/PDF/Word do extrato de um programa; você confere e grava. O PDF do extrato da Smiles é lido sem IA (sem custo) |
 | — | **Lotes** — cada compra/bônus/transferência com o seu custo e o que resta dela |
 | — | **Extrato** — cada movimento com o saldo e o CMP logo depois |
 | — | **Pendências** — saldos negativos e vendas sem valor |
@@ -34,6 +34,11 @@ Os simuladores (Bumerangue e CI) ficaram de fora desta versão.
   completar a transferência saem primeiro, e o destino recebe o custo real da operação. Na
   importação do extrato, a linha vira compra + transferência; à mão, marque a caixinha
   "Transferência imediata" na transferência (lançando a compra antes, em Entradas).
+- **Custo atribuído aos pontos de parceiros**: pontos ganhos em compras de parceiros (Uber,
+  Amazon, Insider...) entram como "Acúmulo em parceiro" e recebem o custo por milheiro
+  cadastrado no programa (ou um valor próprio no lançamento). Não sai do caixa. Pontos do
+  cartão e bônus do próprio programa ficam sem custo. Em **Entradas → Classificar acúmulos**
+  dá para reclassificar em grupo o que já está lançado.
 - **CMP recente**: o painel mostra quanto custou cada milheiro que entrou nos últimos
   30, 90, 180 ou 365 dias — a referência para decidir o preço de venda.
 - **Não dá para gastar pontos que não existem.** Uma venda ou transferência

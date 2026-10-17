@@ -16,10 +16,16 @@ function lerPrograma(dados: FormData) {
   const milheiroTexto = textoOpcional(dados, 'valorMilheiro')
   const valorMilheiro = milheiroTexto ? lerCentavos(milheiroTexto) : null
   if (milheiroTexto && valorMilheiro === null) throw new ErroFormulario('Valor inválido em "Preço de venda do milheiro".')
+  const parceiroTexto = textoOpcional(dados, 'custoParceiroMilheiro')
+  const custoParceiroMilheiro = parceiroTexto ? lerCentavos(parceiroTexto) : null
+  if (parceiroTexto && custoParceiroMilheiro === null) {
+    throw new ErroFormulario('Valor inválido em "Custo atribuído aos pontos de parceiros".')
+  }
   return {
     nome: textoObrigatorio(dados, 'nome', 'Nome'),
     tipo: opcao(dados, 'tipo', 'Tipo', TIPOS),
     valorMilheiro,
+    custoParceiroMilheiro,
   }
 }
 
