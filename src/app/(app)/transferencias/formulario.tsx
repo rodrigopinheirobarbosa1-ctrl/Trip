@@ -18,6 +18,7 @@ export type ValoresTransferencia = {
   bonusPercentual: string
   pontosDestino: string
   observacao: string
+  imediata: boolean
 }
 
 export function FormularioTransferencia({
@@ -41,6 +42,7 @@ export function FormularioTransferencia({
   const [pontos, setPontos] = useState(valores.pontos)
   const [bonus, setBonus] = useState(valores.bonusPercentual)
   const [destinoManual, setDestinoManual] = useState(valores.pontosDestino)
+  const [imediata, setImediata] = useState(valores.imediata)
 
   const p = lerPontos(pontos)
   const b = lerNumero(bonus) ?? 0
@@ -111,7 +113,23 @@ export function FormularioTransferencia({
         </Campo>
       </div>
 
-      {custo !== null && (
+      <label className="flex items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+        <input type="checkbox" name="imediata" value="sim" checked={imediata} onChange={(e) => setImediata(e.target.checked)} className="mt-1" />
+        <span>
+          <strong>Transferência imediata</strong> (comprei pontos na hora para completar a transferência, como no &quot;Pontos +
+          Dinheiro&quot; da Livelo)
+          <span className="block text-xs text-slate-500">
+            Os pontos da compra feita na origem perto desta data saem primeiro, e o destino recebe o custo real da operação. Lance a
+            compra antes, em Entradas.
+          </span>
+        </span>
+      </label>
+
+      {imediata ? (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          Custo levado para o destino: o da compra feita na hora (e, se faltar, o dos lotes mais antigos da origem).
+        </p>
+      ) : custo !== null && (
         <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
           Custo levado para o destino (lotes mais antigos da origem, {formatarCmp(cmpOrigem)} o milheiro): <strong>{formatarReais(custo)}</strong>
           {cmpChegada !== null && (

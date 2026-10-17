@@ -44,7 +44,7 @@ test('sugere pelo texto do extrato da Livelo', () => {
       ['ACUMULO', null],
       ['TRANSF_ENVIADA', 'smiles'],
       ['USO_PESSOAL', null],
-      ['USO_PESSOAL', null], // "Pontos + Dinheiro" na Smiles não é transferência
+      ['TRANSF_IMEDIATA', 'smiles'], // "Pontos + Dinheiro" na Smiles: parte dos pontos foi comprada na hora
     ],
   )
 })
@@ -161,4 +161,21 @@ test('não sugere corrigir transferência de outro programa, longe da data ou j�
     }),
   )
   assert.deepEqual(s.map((x) => x.corrigirBonus), [null, null, null])
+})
+
+test('transferência imediata já lançada (compra + transferência maior) casa com a linha do extrato', () => {
+  const s = montarSugestoes([l('2026-03-03', 'Pontos + Dinheiro', 'Azul', -1600, 1, 'pagamento em dinheiro')], ctx({
+    existentes: {
+      ...vazio,
+      entradas: [{ id: 'c1', data: new Date('2026-03-03T00:00:00Z'), pontos: 158400 }],
+      enviadas: [{ id: 't1', data: new Date('2026-03-03T00:00:00Z'), pontos: 160000 }],
+    },
+  }))
+  assert.deepEqual(s[0].jaLancado, { tipo: 'TRANSFERENCIA', id: 't1', data: '2026-03-03', compraId: 'c1' })
+})
+
+test('linha da companhia aérea com "Pontos <programa>" vira transferência recebida', () => {
+  const s = montarSugestoes([l('2026-03-03', 'Acúmulo', 'Acúmulo de ponto - Pontos Livelo', 340800)], ctx({ programaId: 'azul' }))
+  assert.equal(s[0].acao, 'TRANSF_RECEBIDA')
+  assert.equal(s[0].outroProgramaId, 'livelo')
 })

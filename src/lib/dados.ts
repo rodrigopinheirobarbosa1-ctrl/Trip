@@ -16,7 +16,8 @@ export async function carregarMovimentos(): Promise<Movimentos> {
     }),
     db.transferencia.findMany({
       select: {
-        id: true, data: true, titularId: true, origemId: true, destinoId: true, pontos: true, pontosDestino: true, criadoEm: true,
+        id: true, data: true, titularId: true, origemId: true, destinoId: true, pontos: true, pontosDestino: true, compraId: true,
+        criadoEm: true,
       },
     }),
     db.saida.findMany({

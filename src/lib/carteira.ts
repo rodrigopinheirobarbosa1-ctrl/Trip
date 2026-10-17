@@ -12,6 +12,9 @@
  *  - A transferência leva para o destino o custo dos lotes que saíram da
  *    origem, num lote novo; o bônus entra sem custo e por isso baixa o CMP
  *    desse lote.
+ *  - Exceção: a TRANSFERÊNCIA IMEDIATA (pontos comprados na hora para
+ *    completar a transferência) usa primeiro o lote dessa compra. Os pontos
+ *    comprados nunca ficaram na conta; o custo da operação é o da compra.
  *  - Assim, uma promoção barata e uma compra cara ficam separadas: não se
  *    misturam numa média.
  *
@@ -49,6 +52,8 @@ export type MovTransferencia = {
   pontos: number
   pontosDestino: number
   ordem?: number
+  /** Transferência imediata: a compra feita na hora, cujos pontos saem primeiro. */
+  compraId?: string | null
 }
 
 export type MovSaida = {
@@ -220,11 +225,20 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
     st.ultimoCmp = cmp
   }
 
-  /** Retira pontos dos lotes mais antigos primeiro. */
-  const retirar = (st: Estado, pontos: number): Omit<CustoMovimento, 'saldoDepois'> => {
+  /** Retira pontos dos lotes mais antigos primeiro (ou, antes de todos, do lote `primeiro`). */
+  const retirar = (st: Estado, pontos: number, primeiro?: string | null): Omit<CustoMovimento, 'saldoDepois'> => {
     let falta = pontos
     let custo = 0
     const consumos: Consumo[] = []
+    const escolhido = primeiro ? st.lotes.find((l) => l.id === primeiro && l.restantes > 0) : undefined
+    if (escolhido) {
+      const usa = Math.min(falta, escolhido.restantes)
+      const c = (escolhido.cmp * usa) / 1000
+      escolhido.restantes -= usa
+      falta -= usa
+      custo += c
+      consumos.push({ loteId: escolhido.id, data: escolhido.data, pontos: usa, cmp: escolhido.cmp, custo: c })
+    }
     while (falta > 0 && st.inicio < st.lotes.length) {
       const l = st.lotes[st.inicio]
       if (l.restantes <= 0) {
@@ -263,7 +277,7 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
     } else if (ev.classe === 1) {
       const { t } = ev
       const origem = estado(t.titularId, t.origemId)
-      const r = retirar(origem, t.pontos)
+      const r = retirar(origem, t.pontos, t.compraId)
       anotar(origem, { tipo: 'TRANSFERENCIA_ENVIADA', id: t.id, data: t.data, pontos: -t.pontos, custo: -r.custo })
       custoTransferencias.set(t.id, { ...r, saldoDepois: origem.posicao.pontos })
 

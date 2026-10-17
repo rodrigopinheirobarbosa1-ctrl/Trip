@@ -243,3 +243,34 @@ test('CMP recente: só o que entrou no período, sem saldo inicial', () => {
   assert.equal(r.custo, 110000)
   assert.equal(r.cmp, 1000)
 })
+
+test('transferência imediata usa primeiro o lote da compra feita na hora', () => {
+  const m = vazio()
+  // Lote antigo caro na Livelo e a compra da transferência imediata (Rodrigo, 03/03/2026).
+  m.entradas.push({ id: 'antigo', data: d('2026-01-10'), titularId: 'r', programaId: 'livelo', pontos: 50000, valor: 190000 }) // R$ 38
+  m.entradas.push({ id: 'compra', data: d('2026-03-03'), titularId: 'r', programaId: 'livelo', pontos: 158400, valor: 424512 }) // R$ 26,80
+  m.transferencias.push({
+    id: 't', data: d('2026-03-03'), titularId: 'r', origemId: 'livelo', destinoId: 'azul',
+    pontos: 160000, pontosDestino: 340800, compraId: 'compra',
+  })
+  const c = calcularCarteira(m)
+  const custo = c.custoTransferencias.get('t')!
+  // 158.400 da compra + 1.600 do lote antigo.
+  assert.deepEqual(custo.lotes.map((l) => [l.loteId, l.pontos]), [['compra', 158400], ['antigo', 1600]])
+  assert.equal(Math.round(custo.custo), 424512 + 6080)
+  // O lote antigo continua quase inteiro na Livelo, com o custo dele.
+  const livelo = c.posicoes.get(chavePosicao('r', 'livelo'))!
+  assert.equal(livelo.pontos, 48400)
+  assert.equal(Math.round(livelo.cmp!), 3800)
+  // Na Azul: (R$ 4.245,12 + R$ 60,80) / 340.800 = R$ 12,63 o milheiro.
+  assert.equal(Math.round(c.posicoes.get(chavePosicao('r', 'azul'))!.cmp!), 1263)
+})
+
+test('sem a compra ligada, a transferência segue o PEPS normal', () => {
+  const m = vazio()
+  m.entradas.push({ id: 'antigo', data: d('2026-01-10'), titularId: 'r', programaId: 'livelo', pontos: 50000, valor: 190000 })
+  m.entradas.push({ id: 'compra', data: d('2026-03-03'), titularId: 'r', programaId: 'livelo', pontos: 158400, valor: 424512 })
+  m.transferencias.push({ id: 't', data: d('2026-03-03'), titularId: 'r', origemId: 'livelo', destinoId: 'azul', pontos: 160000, pontosDestino: 340800 })
+  const custo = calcularCarteira(m).custoTransferencias.get('t')!
+  assert.deepEqual(custo.lotes.map((l) => [l.loteId, l.pontos]), [['antigo', 50000], ['compra', 110000]])
+})

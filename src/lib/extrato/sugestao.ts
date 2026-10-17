@@ -35,6 +35,7 @@ export const ACOES = {
   BONUS: 'Entrada: bônus',
   TRANSF_RECEBIDA: 'Transferência recebida',
   TRANSF_ENVIADA: 'Transferência enviada',
+  TRANSF_IMEDIATA: 'Transferência imediata (pontos + compra)',
   USO_PESSOAL: 'Saída: uso pessoal',
   VENDA: 'Saída: venda',
   OUTRA_SAIDA: 'Saída: outra (expiração, ajuste)',
@@ -43,7 +44,7 @@ export const ACOES = {
 export type Acao = keyof typeof ACOES
 
 export const ACOES_ENTRADA: Acao[] = ['COMPRA', 'ACUMULO', 'BONUS', 'TRANSF_RECEBIDA', 'IGNORAR']
-export const ACOES_SAIDA: Acao[] = ['TRANSF_ENVIADA', 'USO_PESSOAL', 'VENDA', 'OUTRA_SAIDA', 'IGNORAR']
+export const ACOES_SAIDA: Acao[] = ['TRANSF_ENVIADA', 'TRANSF_IMEDIATA', 'USO_PESSOAL', 'VENDA', 'OUTRA_SAIDA', 'IGNORAR']
 
 export type Regra = {
   chave: string
@@ -55,14 +56,20 @@ export type Regra = {
 
 export type Existentes = {
   entradas: { id: string; data: Date; pontos: number }[]
-  /** Transferências que saíram deste programa. */
-  enviadas: { id: string; data: Date; pontos: number }[]
+  /** Transferências que saíram deste programa (compraId: transferência imediata). */
+  enviadas: { id: string; data: Date; pontos: number; compraId?: string | null }[]
   /** Transferências que chegaram neste programa. */
   recebidas: { id: string; data: Date; pontos: number; pontosDestino: number; origemId: string; bonusPercentual: number }[]
   saidas: { id: string; data: Date; pontos: number }[]
 }
 
-export type JaLancado = { tipo: 'ENTRADA' | 'TRANSFERENCIA' | 'SAIDA'; id: string; data: string }
+export type JaLancado = {
+  tipo: 'ENTRADA' | 'TRANSFERENCIA' | 'SAIDA'
+  id: string
+  data: string
+  /** Transferência imediata: a compra feita na hora, que também corresponde a esta linha. */
+  compraId?: string
+}
 
 /** Transferência recebida que é esta linha, mas com outro total: corrigir o bônus. */
 export type CorrecaoBonus = {
@@ -181,7 +188,8 @@ export function sugerirPeloTexto(
   const outro = programaCitado(`${l.descricao} ${l.observacao ?? ''}`, programas, programaId)
 
   if (l.pontos >= 0) {
-    if (outro && /transf|resgate|conversao|recebid/.test(tudo)) {
+    const nomeOutro = outro ? normalizar(programas.find((p) => p.id === outro)?.nome) : ''
+    if (outro && (/transf|resgate|conversao|recebid/.test(tudo) || tudo.includes(`pontos ${nomeOutro}`))) {
       return { acao: 'TRANSF_RECEBIDA', outroProgramaId: outro, motivo: 'cita outro programa' }
     }
     if (/bonus|bonific|promoc/.test(tudo)) return { acao: 'BONUS', outroProgramaId: null, motivo: 'texto fala em bônus' }
@@ -193,7 +201,11 @@ export function sugerirPeloTexto(
   if (/expira|vencid|vencimento|estorno|cancelad/.test(tudo)) {
     return { acao: 'OUTRA_SAIDA', outroProgramaId: null, motivo: 'expiração ou estorno' }
   }
-  if (outro && !/dinheiro/.test(tudo)) {
+  // "Pontos + Dinheiro" para outro programa: a parte em dinheiro comprou pontos na hora.
+  if (outro && /dinheiro|imediat/.test(tudo)) {
+    return { acao: 'TRANSF_IMEDIATA', outroProgramaId: outro, motivo: 'pontos + dinheiro para outro programa' }
+  }
+  if (outro) {
     return { acao: 'TRANSF_ENVIADA', outroProgramaId: outro, motivo: 'saída para outro programa' }
   }
   if (/transferid|grupo de transf|familia/.test(tudo)) {
@@ -245,6 +257,26 @@ export function montarSugestoes(
     if (!achado) return null
     usados.add(achado.id)
     return { tipo: s ? 'SAIDA' : 'TRANSFERENCIA', id: achado.id, data: achado.data.toISOString().slice(0, 10) }
+  })
+
+  // Saída sem par que é uma transferência imediata já lançada: a transferência
+  // tirou mais pontos, e a diferença é a compra feita na hora (ligada ou não).
+  linhas.forEach((l, n) => {
+    if (lancados[n] || l.pontos >= 0) return
+    const proprios = -l.pontos
+    const d = dataDe(l.data).getTime()
+    const perto = (x: { data: Date }) => Math.abs(x.data.getTime() - d) <= 3 * DIA
+    for (const t of contexto.existentes.enviadas) {
+      if (usados.has(t.id) || t.pontos <= proprios || !perto(t)) continue
+      const compra = contexto.existentes.entradas.find(
+        (e) => !usados.has(e.id) && (t.compraId ? e.id === t.compraId : e.pontos === t.pontos - proprios && perto(e)),
+      )
+      if (!compra || compra.pontos !== t.pontos - proprios) continue
+      usados.add(t.id)
+      usados.add(compra.id)
+      lancados[n] = { tipo: 'TRANSFERENCIA', id: t.id, data: t.data.toISOString().slice(0, 10), compraId: compra.id }
+      return
+    }
   })
 
   // 2ª passada: entrada sem par que é uma transferência recebida com outro total.
