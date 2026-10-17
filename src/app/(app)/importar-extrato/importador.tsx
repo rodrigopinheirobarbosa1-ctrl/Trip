@@ -196,6 +196,10 @@ export function ImportadorExtrato({
   const mantidosForaDoExtrato = foraDoExtrato.filter((f) => !excluir.has(f.id)).reduce((s, f) => s + f.pontos, 0)
   const saldoDepois =
     (conferencia?.saldoSistema ?? 0) - efeitoExcluidos + efeitoCorrecoes + pontosSaldoInicial + marcadas.reduce((s, l) => s + l.s.linha.pontos, 0)
+  // Saldo com que o extrato começaria: saldo final - tudo o que as linhas movimentam.
+  // Negativo é impossível: faltam saídas nos prints, há sinal trocado, ou o saldo não é este.
+  const somaLinhas = linhas.reduce((s, l) => s + l.s.linha.pontos, 0)
+  const inicioDoExtrato = saldoExtrato !== null ? saldoExtrato - somaLinhas : null
   const primeiraData = linhas[0]?.s.linha.data
   const diaAntes = primeiraData ? new Date(new Date(`${primeiraData}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10) : null
   const comprasSemValor = marcadas.filter((l) => l.acao === 'COMPRA' && !lerCentavos(l.valor)).length
@@ -378,12 +382,25 @@ export function ImportadorExtrato({
             </div>
           </div>
 
+          {inicioDoExtrato !== null && inicioDoExtrato < 0 && (
+            <Aviso tom="vermelho">
+              <strong>O extrato lido não fecha.</strong> As linhas somam {somaLinhas > 0 ? '+' : ''}
+              {formatarPontos(somaLinhas)} pontos, mas o saldo final é {formatarPontos(saldoExtrato ?? 0)}: a conta começaria com{' '}
+              {formatarPontos(inicioDoExtrato)} pontos, o que não existe. Antes de gravar, confira:
+              <ul className="mt-1 list-disc pl-5">
+                <li>se faltam prints de <strong>saídas</strong> (resgates, emissões, transferências). Alguns programas mostram as saídas numa aba ou filtro separado;</li>
+                <li>se alguma saída foi lida como entrada (aparece em verde, com +, na coluna Pontos);</li>
+                <li>se o saldo no campo acima é o saldo de pontos disponíveis de hoje.</li>
+              </ul>
+            </Aviso>
+          )}
+
           {foraDoExtrato.length > 0 && (
             <div className="cartao space-y-3 p-4 text-sm">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p className="font-semibold">
-                    {foraDoExtrato.length} lançamento(s) do sistema neste período não aparecem no extrato
+                    {foraDoExtrato.length} lançamento(s) do sistema não aparecem no extrato (do início dele até hoje)
                   </p>
                   <p className="text-xs text-slate-500">
                     Normalmente são lançamentos antigos (da planilha) duplicados ou com valor diferente. Os marcados serão{' '}
