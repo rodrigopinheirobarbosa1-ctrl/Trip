@@ -274,3 +274,12 @@ test('sem a compra ligada, a transferência segue o PEPS normal', () => {
   const custo = calcularCarteira(m).custoTransferencias.get('t')!
   assert.deepEqual(custo.lotes.map((l) => [l.loteId, l.pontos]), [['antigo', 50000], ['compra', 110000]])
 })
+
+test('transferência maior que o saldo da origem: os pontos que faltaram ficam marcados', () => {
+  const m = vazio()
+  m.entradas.push({ id: 'e', data: d('2026-07-01'), titularId: 'lea', programaId: 'livelo', pontos: 60000, valor: 180000 }) // R$ 30
+  m.transferencias.push({ id: 't', data: d('2026-07-28'), titularId: 'lea', origemId: 'livelo', destinoId: 'smiles', pontos: 375000, pontosDestino: 675000 })
+  const c = calcularCarteira(m).custoTransferencias.get('t')!
+  assert.equal(c.semLote, 315000)
+  assert.equal(c.lotes.reduce((s, l) => s + l.pontos, 0), 60000)
+})

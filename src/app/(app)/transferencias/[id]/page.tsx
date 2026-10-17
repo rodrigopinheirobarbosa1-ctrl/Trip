@@ -1,10 +1,10 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { listasLancamento, saldosParaFormulario } from '@/lib/dados'
+import { carregarCarteira, listasLancamento, saldosParaFormulario } from '@/lib/dados'
 import { calcularPontosDestino } from '@/lib/carteira'
 import Link from '@/components/link'
 import { dataParaCampo, formatarData, formatarPontos, formatarReais } from '@/lib/formatos'
-import { Cabecalho, Cartao } from '@/components/ui'
+import { Aviso, Cabecalho, Cartao } from '@/components/ui'
 import { BotaoExcluir } from '@/components/excluir'
 import { FormularioTransferencia } from '../formulario'
 import { excluirTransferencia, salvarTransferencia } from '../actions'
@@ -13,10 +13,13 @@ export default async function EditarTransferencia({ params }: { params: Promise<
   const { id } = await params
   const t = await db.transferencia.findUnique({ where: { id }, include: { compra: true } })
   if (!t) notFound()
-  const [listas, saldos] = await Promise.all([
+  const [listas, saldos, carteira, origem] = await Promise.all([
     listasLancamento({ titulares: [t.titularId], programas: [t.origemId, t.destinoId] }),
     saldosParaFormulario(),
+    carregarCarteira(),
+    db.programa.findUnique({ where: { id: t.origemId } }),
   ])
+  const faltou = carteira.custoTransferencias.get(t.id)?.semLote ?? 0
 
   return (
     <>
@@ -24,6 +27,19 @@ export default async function EditarTransferencia({ params }: { params: Promise<
         titulo="Alterar transferência"
         descricao={t.criadoPor ? `Lançada por ${t.criadoPor} em ${t.criadoEm.toLocaleDateString('pt-BR')}` : undefined}
       />
+      {faltou > 0 && (
+        <div className="mb-4 max-w-3xl">
+          <Aviso tom="vermelho">
+            Faltaram <strong>{formatarPontos(faltou)} pontos</strong> na {origem?.nome} nesta data: ela só tinha{' '}
+            {formatarPontos(t.pontos - faltou)} dos {formatarPontos(t.pontos)} que saíram. Esses pontos foram custeados pelo último
+            custo conhecido, então o custo levado e o CMP no destino ficam abaixo do real. Lance, com data anterior a{' '}
+            {formatarData(t.data)}, as entradas que faltam na {origem?.nome} (ou importe o extrato dela).{' '}
+            <Link href={`/extrato?titular=${t.titularId}&programa=${t.origemId}`} className="font-semibold underline">
+              Ver extrato da origem
+            </Link>
+          </Aviso>
+        </div>
+      )}
       {t.compra && (
         <p className="mb-4 max-w-3xl rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
           Transferência imediata, com a compra de{' '}

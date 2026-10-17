@@ -2,6 +2,12 @@ import Link from '@/components/link'
 import { listarPendencias } from '@/lib/pendencias'
 import { Cabecalho, Cartao, Etiqueta, Vazio } from '@/components/ui'
 
+const ROTULOS = {
+  SALDO_NEGATIVO: 'Saldo negativo',
+  CUSTO_SUBESTIMADO: 'Custo não confiável',
+  VENDA_SEM_VALOR: 'Venda sem valor',
+} as const
+
 export default async function Pendencias() {
   const lista = await listarPendencias()
 
@@ -19,8 +25,8 @@ export default async function Pendencias() {
             {lista.map((p, i) => (
               <li key={i} className="py-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Etiqueta tom={p.tipo === 'SALDO_NEGATIVO' ? 'vermelho' : 'amarelo'}>
-                    {p.tipo === 'SALDO_NEGATIVO' ? 'Saldo negativo' : 'Venda sem valor'}
+                  <Etiqueta tom={p.tipo === 'VENDA_SEM_VALOR' ? 'amarelo' : 'vermelho'}>
+                    {ROTULOS[p.tipo]}
                   </Etiqueta>
                   <Link href={p.link} className="font-medium text-marca-700 hover:underline">
                     {p.titulo}
