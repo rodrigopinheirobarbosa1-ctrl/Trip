@@ -1,6 +1,7 @@
 import 'server-only'
 import { db } from './db'
 import type { UsuarioLogado } from './auth'
+import type { Retrato } from './relancar'
 
 /**
  * Registra no histórico quem fez o quê e quando. Com várias pessoas usando o
@@ -12,6 +13,8 @@ export async function auditar(registro: {
   entidade: string
   entidadeId?: string | null
   resumo: string
+  /** Exclusões: cópia do lançamento, para o botão "Relançar" do histórico. */
+  dados?: Retrato
 }): Promise<void> {
   await db.auditoria.create({
     data: {
@@ -21,6 +24,7 @@ export async function auditar(registro: {
       entidade: registro.entidade,
       entidadeId: registro.entidadeId ?? null,
       resumo: registro.resumo,
+      ...(registro.dados ? { dados: registro.dados } : {}),
     },
   })
 }

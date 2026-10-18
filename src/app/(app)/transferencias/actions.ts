@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { db } from '@/lib/db'
 import { exigirUsuarioAction } from '@/lib/auth'
 import { detalharTransferencia } from '@/lib/detalhes-historico'
+import { retratoTransferencia } from '@/lib/relancar'
 import { auditar } from '@/lib/audit'
 import { validarSaldos } from '@/lib/dados'
 import { calcularPontosDestino, type MovTransferencia } from '@/lib/carteira'
@@ -146,6 +147,7 @@ export async function excluirTransferencia(id: string, _e: EstadoForm): Promise<
       entidade: 'Transferencia',
       entidadeId: id,
       resumo: `Excluiu — ${detalharTransferencia(t)}`,
+      dados: retratoTransferencia(t),
     })
     revalidatePath('/', 'layout')
     redirect('/transferencias')
