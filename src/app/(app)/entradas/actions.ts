@@ -35,7 +35,7 @@ function lerEntrada(dados: FormData) {
   // Sem valor pago não há desembolso, seja qual for a forma escolhida. No parceiro, o
   // valor é um custo atribuído: também não sai do caixa.
   if (valor === 0 || categoria === 'PARCEIRO') formaPagamento = 'SEM_DESEMBOLSO'
-  if (valor > 0 && formaPagamento === 'SEM_DESEMBOLSO') {
+  if (valor > 0 && formaPagamento === 'SEM_DESEMBOLSO' && categoria !== 'PARCEIRO') {
     throw new ErroFormulario('Há valor pago: escolha a forma de pagamento (PIX, cartão...).')
   }
   const parcelas = formaPagamento === 'SEM_DESEMBOLSO' ? 1 : inteiroEntre(dados, 'parcelas', 'Parcelas', 1, 48, 1)
