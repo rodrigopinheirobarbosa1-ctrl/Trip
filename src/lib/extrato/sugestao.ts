@@ -63,7 +63,8 @@ export type Existentes = {
   enviadas: { id: string; data: Date; pontos: number; compraId?: string | null }[]
   /** Transferências que chegaram neste programa. */
   recebidas: { id: string; data: Date; pontos: number; pontosDestino: number; origemId: string; bonusPercentual: number }[]
-  saidas: { id: string; data: Date; pontos: number }[]
+  /** texto: descrição/observação, para casar uma devolução com a reserva do mesmo hotel. */
+  saidas: { id: string; data: Date; pontos: number; texto?: string | null }[]
 }
 
 export type JaLancado = {
@@ -188,6 +189,36 @@ export function programaCitado(texto: string, programas: { id: string; nome: str
 /** Textos de pontos que vêm da fatura do cartão de crédito (sem custo). */
 const CARTAO =
   /cartao|fatura|membership rewards|\bamex\b|american express|itau|itaucard|santander|bradesco|\bcaixa\b|\bbanco\b|nubank|\bc6\b|\bbtg\b|\bxp\b|sicredi|sicoob|credicard|ourocard|porto seguro|\binter\b|\bsafra\b|\bdiners\b|\bvisa\b|mastercard|\belo\b|credito de pontos/
+
+/** Palavras genéricas de resgates e cancelamentos, que não identificam o hotel ou o voo. */
+const GENERICAS = new Set(
+  ('estadia paga pago com pontos ponto reserva reservas cancelada cancelado cancelamento estorno estornado reembolso ' +
+    'devolucao devolvido hotel hoteis resgate uso pessoal credito debito pts milhas noite noites dos das para por uma acumulo ' +
+    'saida entrada')
+    .split(' '),
+)
+
+/** Palavras que identificam o hotel/voo ("Novotel Lisboa" -> novotel, lisboa). */
+export function nomeDoResgate(texto: string | null | undefined): Set<string> {
+  return new Set(
+    normalizar(texto)
+      .replace(/[^a-z0-9 ]/g, ' ')
+      .split(' ')
+      .filter((w) => w.length >= 3 && !GENERICAS.has(w) && !/^\d+$/.test(w)),
+  )
+}
+
+/**
+ * A devolução e o resgate falam do mesmo hotel/voo? Sem nome em algum dos dois,
+ * não dá para saber (null). Com nome, a maior parte das palavras precisa coincidir.
+ */
+export function mesmoResgate(a: string | null | undefined, b: string | null | undefined): boolean | null {
+  const x = nomeDoResgate(a)
+  const y = nomeDoResgate(b)
+  if (x.size === 0 || y.size === 0) return null
+  const comuns = [...x].filter((w) => y.has(w)).length
+  return comuns > 0 && comuns / Math.min(x.size, y.size) >= 0.6
+}
 
 /** Sugestão pelo texto da linha, quando não há regra aprendida. */
 export function sugerirPeloTexto(
@@ -413,15 +444,26 @@ export function montarSugestoes(
     const d = dataDe(l.data).getTime()
     // O resgate vem antes da devolução (ou no mesmo dia).
     const naJanela = (t: number) => (cancelamento ? t >= d - 365 * DIA && t <= d + 3 * DIA : Math.abs(t - d) <= 3 * DIA)
+    const textoLinha = (x: LinhaLida) => `${x.descricao} ${x.observacao ?? ''}`
+    const mesmoLocalizador = (x: LinhaLida) => Boolean(l.localizador && x.localizador === l.localizador)
+    // Longe no tempo, só casa com o mesmo localizador ou o mesmo hotel/voo: no All Accor muitas
+    // reservas têm o mesmo valor (2.000, 4.000...), e o valor sozinho junta hotéis diferentes.
+    const combina = (x: LinhaLida, t: number) => {
+      if (mesmoLocalizador(x)) return true
+      const nome = mesmoResgate(textoLinha(l), textoLinha(x))
+      if (nome === false) return false
+      return nome === true || Math.abs(t - d) <= 3 * DIA
+    }
     const pontuar = (k: number) =>
-      (l.localizador && linhas[k].localizador === l.localizador ? 0 : 4) + (lancados[k] ? 1 : 0) +
+      (mesmoLocalizador(linhas[k]) ? 0 : mesmoResgate(textoLinha(l), textoLinha(linhas[k])) ? 2 : 4) + (lancados[k] ? 1 : 0) +
       Math.abs(dataDe(linhas[k].data).getTime() - d) / (400 * DIA)
     const k = linhas
       .map((_, k) => k)
       .filter(
         (k) =>
           k !== n && anula[k] === null && linhas[k].pontos === -l.pontos && !correcoes[k] && !parteDe[k] &&
-          naJanela(dataDe(linhas[k].data).getTime()) && (!lancados[k] || lancados[k]!.tipo === 'SAIDA'),
+          naJanela(dataDe(linhas[k].data).getTime()) && combina(linhas[k], dataDe(linhas[k].data).getTime()) &&
+          (!lancados[k] || lancados[k]!.tipo === 'SAIDA'),
       )
       .sort((a, b) => pontuar(a) - pontuar(b))[0]
     const soltar = (i: number) => {
@@ -439,8 +481,11 @@ export function montarSugestoes(
     }
     // O resgate não está no extrato (foi antes do período), mas está lançado no sistema.
     if (!cancelamento) return
+    // Emissão do sistema: só com o mesmo hotel/voo no texto (o valor sozinho não basta).
     const saida = contexto.existentes.saidas
-      .filter((x) => !usados.has(x.id) && x.pontos === l.pontos && naJanela(x.data.getTime()))
+      .filter(
+        (x) => !usados.has(x.id) && x.pontos === l.pontos && naJanela(x.data.getTime()) && mesmoResgate(textoLinha(l), x.texto) === true,
+      )
       .sort((a, b) => b.data.getTime() - a.data.getTime())[0]
     if (!saida) return
     soltar(n)
