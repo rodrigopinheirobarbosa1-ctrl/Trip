@@ -8,6 +8,7 @@ import { db } from '@/lib/db'
 import { exigirUsuarioAction } from '@/lib/auth'
 import { auditar } from '@/lib/audit'
 import { detalharEntrada, detalharSaida, detalharTransferencia } from '@/lib/detalhes-historico'
+import { retratoEntrada, retratoSaida, retratoTransferencia } from '@/lib/relancar'
 import { carregarMovimentos, validarSaldos } from '@/lib/dados'
 import { calcularCarteira, calcularPontosDestino, chavePosicao, type Movimentos } from '@/lib/carteira'
 import { lerPaginaDoExtrato, type ResultadoLeitura } from '@/lib/extrato/ler-com-ia'
@@ -476,9 +477,9 @@ export async function gravarExtrato(entrada: {
   // Tudo o que foi excluído fica descrito no histórico, para poder ser lançado
   // de novo (por exemplo, no CPF certo) sem perder o valor pago ou o bônus.
   const excluidos = [
-    ...entExcluir.map((e) => ({ entidade: 'Entrada', id: e.id, texto: detalharEntrada(e) })),
-    ...traExcluir.map((t) => ({ entidade: 'Transferencia', id: t.id, texto: detalharTransferencia(t) })),
-    ...saiExcluir.map((x) => ({ entidade: 'Saida', id: x.id, texto: detalharSaida(x) })),
+    ...entExcluir.map((e) => ({ entidade: 'Entrada', id: e.id, texto: detalharEntrada(e), dados: retratoEntrada(e) })),
+    ...traExcluir.map((t) => ({ entidade: 'Transferencia', id: t.id, texto: detalharTransferencia(t), dados: retratoTransferencia(t) })),
+    ...saiExcluir.map((x) => ({ entidade: 'Saida', id: x.id, texto: detalharSaida(x), dados: retratoSaida(x) })),
   ]
   for (const t of aCorrigir) {
     const pontosDestino = novoDestino.get(t.id)!
@@ -498,6 +499,7 @@ export async function gravarExtrato(entrada: {
       entidade: x.entidade,
       entidadeId: x.id,
       resumo: `Excluiu ao importar o extrato ${programa.nome} (não estava no extrato) — ${x.texto}`,
+      dados: x.dados,
     })
   }
   await auditar({

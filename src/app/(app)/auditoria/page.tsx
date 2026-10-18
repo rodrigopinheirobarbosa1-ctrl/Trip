@@ -1,6 +1,14 @@
+import Link from '@/components/link'
 import { db } from '@/lib/db'
 import { exigirAdmin } from '@/lib/auth'
 import { Cabecalho, Cartao, Tabela, Td, Th, Vazio } from '@/components/ui'
+
+/** Formulário que recria cada tipo de lançamento excluído. */
+const RELANCAR: Record<string, string> = {
+  Entrada: '/entradas/nova',
+  Saida: '/saidas/nova',
+  Transferencia: '/transferencias/nova',
+}
 
 export default async function Auditoria({
   searchParams,
@@ -56,7 +64,17 @@ export default async function Auditoria({
                 <tr key={a.id}>
                   <Td className="whitespace-nowrap">{a.criadoEm.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</Td>
                   <Td>{a.usuarioNome}</Td>
-                  <Td>{a.resumo}</Td>
+                  <Td>
+                    {a.resumo}
+                    {a.acao === 'EXCLUIR' && RELANCAR[a.entidade] && (
+                      <Link
+                        href={`${RELANCAR[a.entidade]}?relancar=${a.id}`}
+                        className="ml-2 whitespace-nowrap text-xs font-semibold text-marca-700 underline"
+                      >
+                        Relançar
+                      </Link>
+                    )}
+                  </Td>
                 </tr>
               ))}
             </tbody>

@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { db } from '@/lib/db'
 import { exigirUsuarioAction } from '@/lib/auth'
 import { detalharEntrada } from '@/lib/detalhes-historico'
+import { retratoEntrada } from '@/lib/relancar'
 import { auditar } from '@/lib/audit'
 import { validarSaldos } from '@/lib/dados'
 import { formatarData, formatarPontos, formatarReais } from '@/lib/formatos'
@@ -111,6 +112,7 @@ export async function excluirEntrada(id: string, _e: EstadoForm): Promise<Estado
       entidade: 'Entrada',
       entidadeId: id,
       resumo: `Excluiu — ${detalharEntrada(e)}`,
+      dados: retratoEntrada(e),
     })
     revalidatePath('/', 'layout')
     redirect('/entradas')

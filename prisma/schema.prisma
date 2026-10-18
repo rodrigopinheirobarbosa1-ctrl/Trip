@@ -66,6 +66,8 @@ model Auditoria {
   entidade    String
   entidadeId  String?
   resumo      String
+  /// Exclusões: copia do lancamento excluido, para poder relancar.
+  dados       Json?
   criadoEm    DateTime @default(now())
 
   @@index([criadoEm])
