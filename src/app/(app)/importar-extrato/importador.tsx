@@ -163,7 +163,14 @@ export function ImportadorExtrato({
     // Com o saldo do extrato conhecido, o que não aparece nele vem marcado para excluir.
     // Transferências não: mexem também no outro programa e podem ter saído de outra pessoa.
     if (marcarExclusoes) {
-      setExcluir(new Set(saldoFinal !== null ? c.foraDoExtrato.filter((f) => f.tipo !== 'TRANSFERENCIA').map((f) => f.id) : []))
+      // Os ligados a um cancelamento (emissão cancelada, devolução gravada antes) vêm marcados sempre.
+      const doCancelamento = c.sugestoes.flatMap((x) => x.excluirSugerido)
+      setExcluir(
+        new Set([
+          ...doCancelamento,
+          ...(saldoFinal !== null ? c.foraDoExtrato.filter((f) => f.tipo !== 'TRANSFERENCIA').map((f) => f.id) : []),
+        ]),
+      )
     }
   }
 

@@ -34,7 +34,7 @@ const Resposta = z.object({
         .string()
         .nullable()
         .describe('observação da linha: parceiro, texto do bônus/promoção e outros detalhes úteis, se houver'),
-      localizador: z.string().nullable().describe('passagens: localizador da reserva (ex.: "QIHEFV"), se aparecer'),
+      localizador: z.string().nullable().describe('passagens e hotéis: localizador ou número da reserva (ex.: "QIHEFV"), se aparecer'),
     }),
   ),
 })
@@ -47,7 +47,9 @@ Não são movimentações: botões e textos de interface (por exemplo "Turbinar 
 
 O saldo vai em saldoExibido: o total de pontos ou milhas disponíveis agora ("Saldo", "Você tem", "Pontos disponíveis", "Saldo de milhas"...). Alguns programas mostram o saldo numa tela separada, sem movimentações: essa tela também vale (eExtrato = true, saldoExibido com o saldo e nenhuma linha). Só use eExtrato = false para imagens que não são de um programa de pontos.
 
-Extratos em PDF (como o da Smiles) trazem mais detalhes em cada movimentação. Transcreva UMA linha por movimentação (cada "Descrição"), com o total de milhas dela; os "Detalhes da transação" (tarifas, taxas de embarque, bilhetes) já estão somados nesse total e não viram linhas. A data é a do dia da movimentação. Em observacao, junte o parceiro e o texto do bônus quando houver (ex.: "Parceiro: LIVELO S.A. · Bônus: 18/05 WL ate 80%"). Em passagens, o ID de 6 letras é o localizador. A devolução de uma passagem cancelada aparece como passagem com milhas positivas: transcreva assim mesmo, com o sinal positivo.`
+Extratos em PDF (como o da Smiles) trazem mais detalhes em cada movimentação. Transcreva UMA linha por movimentação (cada "Descrição"), com o total de milhas dela; os "Detalhes da transação" (tarifas, taxas de embarque, bilhetes) já estão somados nesse total e não viram linhas. A data é a do dia da movimentação. Em observacao, junte o parceiro e o texto do bônus quando houver (ex.: "Parceiro: LIVELO S.A. · Bônus: 18/05 WL ate 80%"). Em passagens, o ID de 6 letras é o localizador. A devolução de uma passagem cancelada aparece como passagem com milhas positivas: transcreva assim mesmo, com o sinal positivo.
+
+Em hotéis (All Accor e outros), o número da reserva vai em localizador, tanto no resgate quanto no cancelamento dela. Um cancelamento ou estorno que devolve pontos é uma linha positiva: mantenha na descrição a palavra que o extrato usa ("Cancelamento", "Estorno", "Reembolso").`
 
 /** Só em desenvolvimento: lê as respostas de um arquivo, para testar a tela sem gastar com a IA. */
 function respostaDeTeste(pagina: number): z.infer<typeof Resposta> | null {

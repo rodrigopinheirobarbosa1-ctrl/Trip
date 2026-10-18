@@ -123,6 +123,17 @@ export async function montarConferencia(entrada: {
       descricao: `Transferência de ${t.origem.nome}`,
       outroLado: `excluir também devolve ${t.pontos.toLocaleString('pt-BR')} pontos para a ${t.origem.nome}`,
     })),
+    // Emissões canceladas cuja devolução está no extrato (o resgate foi antes do período).
+    ...sugestoes.flatMap((x) => {
+      const s = x.anulaSaida ? saidas.find((y) => y.id === x.anulaSaida!.id) : undefined
+      if (!s || (noPeriodo(s.data) && !casados.has(s.id))) return []
+      return [{
+        tipo: 'SAIDA' as const, id: s.id, data: iso(s.data), pontos: -s.pontos,
+        descricao: ['Emissão cancelada (devolvida em ' + x.linha.data.split('-').reverse().join('/') + ')', s.cliente, s.observacao]
+          .filter(Boolean).join(' · '),
+        outroLado: null,
+      }]
+    }),
   ].sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0))
 
   const carteira = calcularCarteira(movimentos)
