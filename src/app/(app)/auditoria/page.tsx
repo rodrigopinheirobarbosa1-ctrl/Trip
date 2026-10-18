@@ -35,7 +35,15 @@ export default async function Auditoria({
 
   return (
     <>
-      <Cabecalho titulo="Histórico" descricao="Quem fez o quê e quando. Nada aqui pode ser apagado." />
+      <Cabecalho
+        titulo="Histórico"
+        descricao="Quem fez o quê e quando. Nada aqui pode ser apagado."
+        acoes={
+          <a href="/api/exportar" className="btn-secundario" download>
+            Exportar lançamentos (planilha)
+          </a>
+        }
+      />
       <Cartao>
         <form method="get" action="/auditoria" className="mb-4 flex flex-wrap items-end gap-3">
           <label className="flex-1 text-sm">
