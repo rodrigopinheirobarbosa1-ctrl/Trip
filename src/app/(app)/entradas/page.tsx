@@ -35,6 +35,7 @@ export default async function Entradas({ searchParams }: { searchParams: Promise
         descricao="Compras, acúmulos, bônus e saldos iniciais. (Planilha: Lança Entrada Ptos)"
         acoes={
           <>
+            <LinkBotao href="/entradas/lote">Editar em lote</LinkBotao>
             <LinkBotao href="/entradas/classificar">Classificar acúmulos</LinkBotao>
             <LinkBotao href="/entradas/nova" variante="primario">+ Nova entrada</LinkBotao>
           </>
