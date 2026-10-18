@@ -258,3 +258,49 @@ test('Smiles sem a transferência lançada: pontos viram transferência e o bôn
   )
   assert.deepEqual(s.map((x) => [x.acao, x.outroProgramaId]), [['BONUS', null], ['TRANSF_RECEBIDA', 'livelo'], ['TRANSF_RECEBIDA', 'livelo']])
 })
+
+const accor = (extra: Partial<Parameters<typeof montarSugestoes>[1]> = {}) => ctx({ programaId: 'accor', ...extra })
+
+test('All Accor: reserva cancelada semanas depois anula o resgate (os dois ficam de fora)', () => {
+  const s = montarSugestoes(
+    [
+      { ...l('2026-03-01', 'Resgate', 'Reserva Novotel', -10000), localizador: '12345678' },
+      { ...l('2026-04-20', 'Crédito', 'Cancelamento de reserva', 10000), localizador: '12345678' },
+    ],
+    accor(),
+  )
+  assert.deepEqual(s.map((x) => x.acao), ['IGNORAR', 'IGNORAR'])
+})
+
+test('All Accor: reimportando, a devolução gravada como entrada e a reserva lançada vêm para excluir', () => {
+  const s = montarSugestoes(
+    [l('2026-03-01', 'Resgate', 'Reserva Novotel', -10000), l('2026-04-20', 'Crédito', 'Cancelamento de reserva', 10000)],
+    accor({
+      existentes: {
+        ...vazio,
+        entradas: [{ id: 'e-devolucao', data: new Date('2026-04-20T00:00:00Z'), pontos: 10000 }],
+        saidas: [{ id: 's-reserva', data: new Date('2026-03-01T00:00:00Z'), pontos: 10000 }],
+      },
+    }),
+  )
+  assert.deepEqual(s.map((x) => [x.acao, x.jaLancado]), [['IGNORAR', null], ['IGNORAR', null]])
+  assert.deepEqual(s.flatMap((x) => x.excluirSugerido).sort(), ['e-devolucao', 's-reserva'])
+})
+
+test('All Accor: devolução de reserva feita antes do extrato exclui a emissão lançada', () => {
+  const s = montarSugestoes(
+    [l('2026-04-20', 'Crédito', 'Estorno de pontos - reserva cancelada', 8000)],
+    accor({ existentes: { ...vazio, saidas: [{ id: 's-antiga', data: new Date('2026-02-10T00:00:00Z'), pontos: 8000 }] } }),
+  )
+  assert.equal(s[0].acao, 'IGNORAR')
+  assert.deepEqual(s[0].anulaSaida, { id: 's-antiga', data: '2026-02-10' })
+  assert.deepEqual(s[0].excluirSugerido, ['s-antiga'])
+})
+
+test('devolução sem texto de cancelamento não procura resgate antigo', () => {
+  const s = montarSugestoes(
+    [l('2026-03-01', 'Resgate', 'Passagem aérea', -10000), l('2026-04-20', 'Acúmulo', 'Passagem aérea', 10000)],
+    ctx({ programaId: 'smiles' }),
+  )
+  assert.notEqual(s[1].acao, 'IGNORAR')
+})

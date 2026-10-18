@@ -105,6 +105,10 @@ export type Sugestao = {
   corrigirBonus: CorrecaoBonus | null
   /** Esta linha é o bônus, mostrado à parte, da transferência com este id (entra na correção). */
   parteDe: string | null
+  /** Devolução de um resgate que está lançado no sistema (e não no extrato): a emissão a excluir. */
+  anulaSaida: { id: string; data: string } | null
+  /** Lançamentos do sistema que esta linha mostra que devem sair (cancelamento): já vêm marcados. */
+  excluirSugerido: string[]
   /** Por que esta sugestão (mostrado na tela). */
   motivo: string
 }
@@ -390,36 +394,73 @@ export function montarSugestoes(
 
   // 3ª passada: resgate cancelado e devolvido. A devolução (+) e o resgate (-) de
   // mesmo valor se anulam; os dois ficam de fora. Se o resgate cancelado já estava
-  // lançado, ele deixa de casar e aparece para excluir.
+  // lançado, ele deixa de casar e aparece para excluir (e a devolução gravada antes
+  // como entrada também).
+  //  - Texto de cancelamento ("cancelamento", "estorno", "reembolso"...): o resgate pode
+  //    ter sido até 1 ano antes (reserva de hotel cancelada semanas depois).
+  //  - Só "passagem"/"resgate" (cancelada e reemitida): até 3 dias.
   const anula: (number | null)[] = linhas.map(() => null)
+  const anulaSaida: ({ id: string; data: string } | null)[] = linhas.map(() => null)
+  /** Lançamentos do sistema ligados a um cancelamento, que devem vir marcados para excluir. */
+  const excluirSugerido: string[][] = linhas.map(() => [])
+  const CANCELAMENTO = /cancel|estorn|reembols|devolu|revers|refund|ressarc/
   linhas.forEach((l, n) => {
-    if (l.pontos <= 0 || !livre(n) || anula[n] !== null) return
-    if (!/reembols|estorn|cancel|devolu|passagem|resgate|bilhete|emiss/.test(textoDe(l))) return
+    if (l.pontos <= 0 || anula[n] !== null || correcoes[n] || parteDe[n]) return
+    if (lancados[n] && lancados[n]!.tipo !== 'ENTRADA') return
+    const texto = textoDe(l)
+    const cancelamento = CANCELAMENTO.test(texto)
+    if (!cancelamento && !/passagem|resgate|bilhete|emiss|reserva/.test(texto)) return
+    const d = dataDe(l.data).getTime()
+    // O resgate vem antes da devolução (ou no mesmo dia).
+    const naJanela = (t: number) => (cancelamento ? t >= d - 365 * DIA && t <= d + 3 * DIA : Math.abs(t - d) <= 3 * DIA)
     const pontuar = (k: number) =>
-      (l.localizador && linhas[k].localizador === l.localizador ? 0 : 2) + (lancados[k] ? 1 : 0)
+      (l.localizador && linhas[k].localizador === l.localizador ? 0 : 4) + (lancados[k] ? 1 : 0) +
+      Math.abs(dataDe(linhas[k].data).getTime() - d) / (400 * DIA)
     const k = linhas
       .map((_, k) => k)
       .filter(
         (k) =>
           k !== n && anula[k] === null && linhas[k].pontos === -l.pontos && !correcoes[k] && !parteDe[k] &&
-          Math.abs(dataDe(linhas[k].data).getTime() - dataDe(l.data).getTime()) <= 3 * DIA &&
-          (!lancados[k] || lancados[k]!.tipo === 'SAIDA'),
+          naJanela(dataDe(linhas[k].data).getTime()) && (!lancados[k] || lancados[k]!.tipo === 'SAIDA'),
       )
       .sort((a, b) => pontuar(a) - pontuar(b))[0]
-    if (k === undefined) return
-    if (lancados[k]) {
-      usados.delete(lancados[k]!.id)
-      lancados[k] = null
+    const soltar = (i: number) => {
+      if (!lancados[i]) return
+      usados.delete(lancados[i]!.id)
+      excluirSugerido[n].push(lancados[i]!.id)
+      lancados[i] = null
     }
-    anula[n] = k
-    anula[k] = n
+    if (k !== undefined) {
+      soltar(n)
+      soltar(k)
+      anula[n] = k
+      anula[k] = n
+      return
+    }
+    // O resgate não está no extrato (foi antes do período), mas está lançado no sistema.
+    if (!cancelamento) return
+    const saida = contexto.existentes.saidas
+      .filter((x) => !usados.has(x.id) && x.pontos === l.pontos && naJanela(x.data.getTime()))
+      .sort((a, b) => b.data.getTime() - a.data.getTime())[0]
+    if (!saida) return
+    soltar(n)
+    usados.add(saida.id)
+    excluirSugerido[n].push(saida.id)
+    anulaSaida[n] = { id: saida.id, data: saida.data.toISOString().slice(0, 10) }
   })
 
   return linhas.map((l, n) => {
     const chave = chaveDaLinha(l)
     const jaLancado = lancados[n]
     const corrigirBonus = correcoes[n]
-    const extras = { parteDe: parteDe[n] }
+    const extras = { parteDe: parteDe[n], anulaSaida: anulaSaida[n], excluirSugerido: excluirSugerido[n] }
+    if (anulaSaida[n]) {
+      return {
+        linha: l, chave, acao: 'IGNORAR' as const, outroProgramaId: null, valorMilheiro: null, bonusPercentual: null,
+        jaLancado: null, corrigirBonus: null, ...extras,
+        motivo: `devolução da emissão de ${anulaSaida[n]!.data.split('-').reverse().join('/')}, que vai para a lista de exclusão`,
+      }
+    }
     if (anula[n] !== null) {
       const o = linhas[anula[n]!]
       return {
