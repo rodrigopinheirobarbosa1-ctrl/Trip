@@ -274,7 +274,10 @@ test('All Accor: reserva cancelada semanas depois anula o resgate (os dois ficam
 
 test('All Accor: reimportando, a devolução gravada como entrada e a reserva lançada vêm para excluir', () => {
   const s = montarSugestoes(
-    [l('2026-03-01', 'Resgate', 'Reserva Novotel', -10000), l('2026-04-20', 'Crédito', 'Cancelamento de reserva', 10000)],
+    [
+      l('2026-03-01', 'Uso pessoal', 'Estadia paga com pontos: Novotel Lisboa', -10000),
+      l('2026-04-20', 'Crédito', 'Reserva cancelada: Novotel Lisboa', 10000),
+    ],
     accor({
       existentes: {
         ...vazio,
@@ -289,8 +292,17 @@ test('All Accor: reimportando, a devolução gravada como entrada e a reserva la
 
 test('All Accor: devolução de reserva feita antes do extrato exclui a emissão lançada', () => {
   const s = montarSugestoes(
-    [l('2026-04-20', 'Crédito', 'Estorno de pontos - reserva cancelada', 8000)],
-    accor({ existentes: { ...vazio, saidas: [{ id: 's-antiga', data: new Date('2026-02-10T00:00:00Z'), pontos: 8000 }] } }),
+    [l('2026-04-20', 'Crédito', 'Reserva cancelada: ibis Rio De Janeiro Barra Da Tijuca', 8000)],
+    accor({
+      existentes: {
+        ...vazio,
+        saidas: [
+          // Mesmo valor, outro hotel: não pode ser esta.
+          { id: 's-outro-hotel', data: new Date('2026-03-10T00:00:00Z'), pontos: 8000, texto: 'Estadia paga com pontos: Mercure Porto Gaia' },
+          { id: 's-antiga', data: new Date('2026-02-10T00:00:00Z'), pontos: 8000, texto: 'Estadia paga com pontos: ibis Rio De Janeiro Barra Da Tijuca' },
+        ],
+      },
+    }),
   )
   assert.equal(s[0].acao, 'IGNORAR')
   assert.deepEqual(s[0].anulaSaida, { id: 's-antiga', data: '2026-02-10' })
@@ -303,4 +315,17 @@ test('devolução sem texto de cancelamento não procura resgate antigo', () => 
     ctx({ programaId: 'smiles' }),
   )
   assert.notEqual(s[1].acao, 'IGNORAR')
+})
+
+test('All Accor: devolução não casa com reserva de mesmo valor em outro hotel', () => {
+  const s = montarSugestoes(
+    [
+      l('2026-08-16', 'Uso pessoal', 'Estadia paga com pontos: Mercure Porto Gaia Hotel', -6000),
+      l('2026-09-14', 'Crédito', 'Reserva cancelada: ibis Porto Centro Mercado Do Bolhao', 6000),
+      l('2026-08-16', 'Uso pessoal', 'Estadia paga com pontos: Mercure Porto Centro Aliados', -12000),
+      l('2026-09-04', 'Crédito', 'Reserva cancelada: Mercure Porto Centro Aliados', 12000),
+    ],
+    accor(),
+  )
+  assert.deepEqual(s.map((x) => [x.linha.pontos, x.acao === 'IGNORAR']), [[-6000, false], [6000, false], [-12000, true], [12000, true]])
 })

@@ -92,7 +92,17 @@ export async function montarConferencia(entrada: {
   ])
 
   const chave = chavePosicao(titularId, programaId)
-  const sugestoes = montarSugestoes(linhas, { programaId, programas, regras, existentes: { entradas, enviadas, recebidas, saidas } })
+  const sugestoes = montarSugestoes(linhas, {
+    programaId,
+    programas,
+    regras,
+    existentes: {
+      entradas,
+      enviadas,
+      recebidas,
+      saidas: saidas.map((s) => ({ ...s, texto: [s.cliente, s.observacao].filter(Boolean).join(' ') })),
+    },
+  })
   const dia = (s: string) => new Date(`${s}T00:00:00Z`).getTime()
   const primeira = linhas[0] ? dia(linhas[0].data) : Infinity
   const antes = (xs: { data: Date }[]) => xs.some((x) => x.data.getTime() < primeira)
