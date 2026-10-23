@@ -29,7 +29,7 @@ export default async function Saidas({ searchParams }: { searchParams: Promise<R
     const c = carteira.custoSaidas.get(s.id)
     const custo = (c?.custo ?? 0) + s.taxaEmbarque
     const lucro = s.valorVenda - custo
-    return { s, cmp: c?.cmp ?? null, custo, lucro }
+    return { s, cmp: c?.cmp ?? null, custo, lucro, provisorio: c?.provisorio ?? false }
   })
   const vendas = linhas.filter((l) => l.s.tipo === 'VENDA')
   const lucroVendas = vendas.reduce((t, l) => t + l.lucro, 0)
@@ -96,7 +96,7 @@ export default async function Saidas({ searchParams }: { searchParams: Promise<R
               </tr>
             </thead>
             <tbody>
-              {linhas.map(({ s, cmp, custo, lucro }) => (
+              {linhas.map(({ s, cmp, custo, lucro, provisorio }) => (
                 <tr key={s.id} className="hover:bg-slate-50">
                   <Td>
                     <Link href={`/saidas/${s.id}`} className="font-medium text-marca-700 hover:underline">
@@ -120,7 +120,14 @@ export default async function Saidas({ searchParams }: { searchParams: Promise<R
                     )}
                   </Td>
                   <Td alinhar="direita">{formatarPontos(s.pontos)}</Td>
-                  <Td alinhar="direita">{formatarCmp(cmp)}</Td>
+                  <Td alinhar="direita">
+                    {formatarCmp(cmp)}
+                    {provisorio && (
+                      <span className="block text-xs text-amber-700" title="Usa pontos de um trimestre que ainda não fechou">
+                        provisório
+                      </span>
+                    )}
+                  </Td>
                   <Td alinhar="direita">
                     <Dinheiro centavos={custo} />
                   </Td>

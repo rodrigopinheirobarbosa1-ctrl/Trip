@@ -1,6 +1,7 @@
 import Link from '@/components/link'
 import { db } from '@/lib/db'
 import { carregarCarteira, carregarNomes } from '@/lib/dados'
+import { rotuloTrimestre, trimestreDe } from '@/lib/carteira'
 import { formatarCmp, formatarData, formatarPercentual, formatarPontos, hoje } from '@/lib/formatos'
 import { CATEGORIAS_ENTRADA, rotulo } from '@/lib/rotulos'
 import { FiltrosAutomaticos } from '@/components/form'
@@ -54,12 +55,13 @@ export default async function Lotes({ searchParams }: { searchParams: Promise<Re
   const totalPontos = disponiveis.reduce((s, l) => s + l.restantes, 0)
   const totalCusto = disponiveis.reduce((s, l) => s + (l.cmp * l.restantes) / 1000, 0)
   const diaHoje = hoje().getTime()
+  const trimestreAtual = trimestreDe(hoje())
 
   return (
     <>
       <Cabecalho
         titulo="Lotes de pontos"
-        descricao="Cada compra, bônus ou transferência recebida é um lote com o seu próprio custo. As saídas usam primeiro os lotes mais antigos (PEPS)."
+        descricao="Tudo o que entra num programa no mesmo trimestre (compras, clube, bônus, transferências recebidas) tem o custo médio do trimestre. As saídas usam primeiro os lotes mais antigos (PEPS)."
       />
 
       <FiltrosAutomaticos className="cartao mb-4 grid gap-3 p-4 sm:grid-cols-3 nao-imprimir">
@@ -108,7 +110,9 @@ export default async function Lotes({ searchParams }: { searchParams: Promise<Re
                 <Th alinhar="direita">Pontos do lote</Th>
                 <Th alinhar="direita">Já usados</Th>
                 <Th alinhar="direita">Disponíveis</Th>
-                <Th alinhar="direita">CMP do lote</Th>
+                <Th>Trimestre</Th>
+                <Th alinhar="direita">Custo próprio</Th>
+                <Th alinhar="direita">CMP (média do tri)</Th>
                 <Th alinhar="direita">Custo disponível</Th>
                 <Th alinhar="direita">Idade</Th>
               </tr>
@@ -144,6 +148,13 @@ export default async function Lotes({ searchParams }: { searchParams: Promise<Re
                     <Td alinhar="direita" className="font-semibold">
                       {formatarPontos(l.restantes)}
                     </Td>
+                    <Td className="whitespace-nowrap">
+                      {l.naMedia ? rotuloTrimestre(l.trimestre) : 'fora da média'}
+                      {l.naMedia && l.trimestre >= trimestreAtual && (
+                        <span className="block text-xs text-amber-700">aberto: média provisória</span>
+                      )}
+                    </Td>
+                    <Td alinhar="direita">{formatarCmp(l.pontos > 0 ? (l.custoProprio / l.pontos) * 1000 : null)}</Td>
                     <Td alinhar="direita">{formatarCmp(l.cmp)}</Td>
                     <Td alinhar="direita">
                       <Dinheiro centavos={(l.cmp * l.restantes) / 1000} />
@@ -162,6 +173,8 @@ export default async function Lotes({ searchParams }: { searchParams: Promise<Re
                 <Td />
                 <Td />
                 <Td alinhar="direita">{formatarPontos(totalPontos)}</Td>
+                <Td />
+                <Td />
                 <Td alinhar="direita">{formatarCmp(totalPontos ? (totalCusto / totalPontos) * 1000 : null)}</Td>
                 <Td alinhar="direita">
                   <Dinheiro centavos={totalCusto} />
@@ -175,8 +188,11 @@ export default async function Lotes({ searchParams }: { searchParams: Promise<Re
 
       <div className="mt-4">
         <Aviso>
-          A próxima venda ou transferência usa os pontos de cima para baixo (do lote mais antigo para o mais novo) dentro
-          de cada pessoa e programa. Um lote barato de promoção só entra no custo quando os lotes anteriores acabarem.
+          Dentro de cada trimestre, todos os lotes têm o mesmo custo: a média do que entrou no trimestre inteiro (o
+          &quot;custo próprio&quot; é o do lançamento, antes da média). Assim o bônus do clube divide o custo com as
+          mensalidades. Saldo inicial e ajustes ficam fora da média. Entre trimestres vale o PEPS: a próxima venda ou
+          transferência usa primeiro os pontos do trimestre mais antigo. Enquanto o trimestre está aberto, a média é
+          provisória e muda quando entram novos pontos.
         </Aviso>
       </div>
     </>

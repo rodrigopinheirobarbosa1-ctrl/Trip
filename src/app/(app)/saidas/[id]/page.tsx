@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { carregarCarteira, listasLancamento, saldosParaFormulario } from '@/lib/dados'
+import { rotuloTrimestre } from '@/lib/carteira'
 import { centavosParaCampo, dataParaCampo, formatarCmp, formatarData, formatarPontos } from '@/lib/formatos'
 import { Aviso, Cabecalho, Cartao, Dinheiro, Tabela, Td, Th } from '@/components/ui'
 import { BotaoExcluir } from '@/components/excluir'
@@ -62,6 +63,7 @@ export default async function EditarSaida({ params }: { params: Promise<{ id: st
             <thead>
               <tr>
                 <Th>Lote de</Th>
+                <Th>Trimestre</Th>
                 <Th alinhar="direita">Pontos usados</Th>
                 <Th alinhar="direita">CMP do lote</Th>
                 <Th alinhar="direita">Custo</Th>
@@ -71,6 +73,7 @@ export default async function EditarSaida({ params }: { params: Promise<{ id: st
               {consumo.lotes.map((l, i) => (
                 <tr key={i}>
                   <Td>{formatarData(l.data)}</Td>
+                  <Td>{l.naMedia ? rotuloTrimestre(l.trimestre) : 'fora da média'}</Td>
                   <Td alinhar="direita">{formatarPontos(l.pontos)}</Td>
                   <Td alinhar="direita">{formatarCmp(l.cmp)}</Td>
                   <Td alinhar="direita">
@@ -82,6 +85,7 @@ export default async function EditarSaida({ params }: { params: Promise<{ id: st
             <tfoot>
               <tr className="font-semibold">
                 <Td>Total</Td>
+                <Td />
                 <Td alinhar="direita">{formatarPontos(s.pontos)}</Td>
                 <Td alinhar="direita">{formatarCmp(consumo.cmp)}</Td>
                 <Td alinhar="direita">
@@ -90,6 +94,14 @@ export default async function EditarSaida({ params }: { params: Promise<{ id: st
               </tr>
             </tfoot>
           </Tabela>
+          {consumo.provisorio && (
+            <div className="mt-3">
+              <Aviso tom="amarelo">
+                Custo provisório: parte dos pontos é de um trimestre que ainda não fechou. O CMP do lote é a média do que
+                entrou no trimestre até agora e muda se entrarem mais pontos (outra mensalidade, o bônus do clube).
+              </Aviso>
+            </div>
+          )}
           {consumo.semLote > 0 && (
             <div className="mt-3">
               <Aviso tom="amarelo">
