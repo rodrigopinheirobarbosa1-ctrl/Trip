@@ -4,7 +4,23 @@
  * Código puro (sem banco): recebe os lançamentos e devolve os saldos. Por
  * isso é testado diretamente em testes/carteira.test.ts.
  *
- * MÉTODO: PEPS (primeiro que entra, primeiro que sai), por lotes.
+ * MÉTODO: CUSTO MÉDIO POR TRIMESTRE, com PEPS entre trimestres.
+ *  - Tudo o que entra num programa dentro do mesmo trimestre do calendário
+ *    (compras, clube, bônus, acúmulos, transferências recebidas) tem o mesmo
+ *    custo por milheiro: a média do trimestre inteiro. Assim o bônus
+ *    trimestral do clube divide o custo com as mensalidades, e não fica de
+ *    graça só para a operação que o pegou primeiro.
+ *  - A média é do trimestre inteiro, também para saídas feitas no meio dele:
+ *    enquanto o trimestre não fecha, o custo dessas saídas é PROVISÓRIO
+ *    (muda quando entram os outros pontos do trimestre).
+ *  - Saldo inicial e ajustes ficam fora da média (não são aquisições do
+ *    trimestre) e mantêm o próprio custo.
+ *  - Como a transferência leva o custo da origem para o destino, a média de
+ *    um trimestre pode depender da de outro programa: o cálculo é repetido
+ *    até os custos pararem de mudar.
+ *  - Com { metodo: 'PEPS' } cada lote fica com o próprio custo (sem média).
+ *
+ * LOTES: PEPS (primeiro que entra, primeiro que sai).
  *  - Cada entrada de pontos (compra, bônus, transferência recebida) vira um
  *    LOTE com o seu próprio custo por milheiro.
  *  - Toda saída (venda, uso, transferência enviada) consome os lotes mais
@@ -87,6 +103,12 @@ export type Lote = {
   custo: number
   /** Centavos por milheiro. */
   cmp: number
+  /** Trimestre do lote, ex.: "2026-T3". */
+  trimestre: string
+  /** Entra na média do trimestre (saldo inicial e ajuste não entram). */
+  naMedia: boolean
+  /** Custo do próprio lançamento, antes da média (centavos, com fração). */
+  custoProprio: number
 }
 
 export type Posicao = {
@@ -104,7 +126,7 @@ export type Posicao = {
 }
 
 /** De qual lote saíram os pontos de uma operação. */
-export type Consumo = { loteId: string; data: Date; pontos: number; cmp: number; custo: number }
+export type Consumo = { loteId: string; data: Date; pontos: number; cmp: number; custo: number; trimestre: string; naMedia: boolean }
 
 /** Custo atribuído a cada saída e a cada transferência, na data em que ocorreu. */
 export type CustoMovimento = {
@@ -118,6 +140,8 @@ export type CustoMovimento = {
   lotes: Consumo[]
   /** Pontos que saíram sem lote (faltava saldo), custeados pelo último CMP conhecido. */
   semLote: number
+  /** Usou pontos de um trimestre ainda aberto: o custo pode mudar até ele fechar. */
+  provisorio: boolean
 }
 
 export type LinhaExtrato = {
@@ -144,6 +168,62 @@ export function chavePosicao(titularId: string, programaId: string): string {
   return `${titularId}|${programaId}`
 }
 
+/** Trimestre do calendário de uma data (UTC), ex.: "2026-T3". */
+export function trimestreDe(d: Date): string {
+  return `${d.getUTCFullYear()}-T${Math.floor(d.getUTCMonth() / 3) + 1}`
+}
+
+/** "2026-T3" -> "3º tri 2026". */
+export function rotuloTrimestre(t: string): string {
+  const [ano, q] = t.split('-T')
+  return `${q}º tri ${ano}`
+}
+
+/** Categorias que não entram na média do trimestre. */
+const FORA_DA_MEDIA = new Set(['SALDO_INICIAL', 'AJUSTE'])
+
+export type OpcoesCarteira = {
+  /** 'TRIMESTRE' (padrão): custo médio por trimestre. 'PEPS': cada lote com o próprio custo. */
+  metodo?: 'TRIMESTRE' | 'PEPS'
+  /** Data de referência para saber se um trimestre já fechou (padrão: `ate` ou agora). */
+  hoje?: Date
+}
+
+export function calcularCarteira(movs: Movimentos, ate?: Date, opcoes: OpcoesCarteira = {}): Carteira {
+  const hoje = opcoes.hoje ?? ate ?? new Date()
+  if (opcoes.metodo === 'PEPS') return calcularComMedias(movs, ate, null, hoje)
+  // Repete até as médias pararem de mudar (transferências levam custo de um programa a outro).
+  let medias = new Map<string, number>()
+  let carteira = calcularComMedias(movs, ate, medias, hoje)
+  for (let volta = 0; volta < 50; volta++) {
+    const novas = mediasDosTrimestres(carteira)
+    let mudou = false
+    for (const [k, v] of novas) if (Math.abs((medias.get(k) ?? NaN) - v) > 1e-6 || !medias.has(k)) mudou = true
+    if (!mudou) break
+    medias = novas
+    carteira = calcularComMedias(movs, ate, medias, hoje)
+  }
+  return carteira
+}
+
+/** Custo próprio somado / pontos de cada posição e trimestre -> CMP médio. */
+function mediasDosTrimestres(carteira: Carteira): Map<string, number> {
+  const soma = new Map<string, { pontos: number; custo: number }>()
+  for (const [chave, lotes] of carteira.lotes) {
+    for (const l of lotes) {
+      if (!l.naMedia) continue
+      const k = `${chave}|${l.trimestre}`
+      const t = soma.get(k) ?? { pontos: 0, custo: 0 }
+      t.pontos += l.pontos
+      t.custo += l.custoProprio
+      soma.set(k, t)
+    }
+  }
+  const medias = new Map<string, number>()
+  for (const [k, t] of soma) if (t.pontos > 0) medias.set(k, (t.custo / t.pontos) * 1000)
+  return medias
+}
+
 type Evento =
   | { classe: 0; data: number; ordem: number; id: string; e: MovEntrada }
   | { classe: 1; data: number; ordem: number; id: string; t: MovTransferencia }
@@ -161,7 +241,8 @@ type Estado = {
   ultimoCmp: number | null
 }
 
-export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
+function calcularComMedias(movs: Movimentos, ate: Date | undefined, medias: Map<string, number> | null, hoje: Date): Carteira {
+  const trimestreAtual = trimestreDe(hoje)
   const eventos: Evento[] = [
     ...movs.entradas.map((e) => ({ classe: 0 as const, data: e.data.getTime(), ordem: e.ordem ?? 0, id: e.id, e })),
     ...movs.transferencias.map((t) => ({ classe: 1 as const, data: t.data.getTime(), ordem: t.ordem ?? 0, id: t.id, t })),
@@ -217,11 +298,20 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
   }
 
   /** Cria um lote novo (o déficit, se houver, é coberto primeiro). */
-  const acrescentar = (st: Estado, lote: Omit<Lote, 'restantes' | 'cobriuDeficit' | 'cmp'>) => {
-    const cmp = lote.pontos > 0 ? (lote.custo / lote.pontos) * 1000 : 0
+  const acrescentar = (
+    st: Estado,
+    lote: Omit<Lote, 'restantes' | 'cobriuDeficit' | 'cmp' | 'trimestre' | 'custoProprio' | 'naMedia'>,
+    naMedia = true,
+  ) => {
+    const trimestre = trimestreDe(lote.data)
+    const media = naMedia && medias ? medias.get(`${chavePosicao(st.posicao.titularId, st.posicao.programaId)}|${trimestre}`) : undefined
+    const cmp = media ?? (lote.pontos > 0 ? (lote.custo / lote.pontos) * 1000 : 0)
     const cobre = Math.min(st.deficit, lote.pontos)
     st.deficit -= cobre
-    st.lotes.push({ ...lote, cmp, restantes: lote.pontos - cobre, cobriuDeficit: cobre })
+    st.lotes.push({
+      ...lote, custo: (cmp * lote.pontos) / 1000, custoProprio: lote.custo, cmp, trimestre, naMedia: naMedia && !!medias,
+      restantes: lote.pontos - cobre, cobriuDeficit: cobre,
+    })
     st.ultimoCmp = cmp
   }
 
@@ -237,7 +327,7 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
       escolhido.restantes -= usa
       falta -= usa
       custo += c
-      consumos.push({ loteId: escolhido.id, data: escolhido.data, pontos: usa, cmp: escolhido.cmp, custo: c })
+      consumos.push({ loteId: escolhido.id, data: escolhido.data, pontos: usa, cmp: escolhido.cmp, custo: c, trimestre: escolhido.trimestre, naMedia: escolhido.naMedia })
     }
     while (falta > 0 && st.inicio < st.lotes.length) {
       const l = st.lotes[st.inicio]
@@ -250,7 +340,7 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
       l.restantes -= usa
       falta -= usa
       custo += c
-      consumos.push({ loteId: l.id, data: l.data, pontos: usa, cmp: l.cmp, custo: c })
+      consumos.push({ loteId: l.id, data: l.data, pontos: usa, cmp: l.cmp, custo: c, trimestre: l.trimestre, naMedia: l.naMedia })
       st.ultimoCmp = l.cmp
       if (l.restantes === 0) st.inicio++
     }
@@ -259,7 +349,8 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
       custo += ((st.ultimoCmp ?? 0) * falta) / 1000
       st.deficit += falta
     }
-    return { cmp: pontos > 0 ? (custo / pontos) * 1000 : 0, custo, lotes: consumos, semLote: falta }
+    const provisorio = consumos.some((c) => c.naMedia && c.trimestre >= trimestreAtual)
+    return { cmp: pontos > 0 ? (custo / pontos) * 1000 : 0, custo, lotes: consumos, semLote: falta, provisorio }
   }
 
   for (const ev of eventos) {
@@ -267,8 +358,11 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
       const { e } = ev
       const st = estado(e.titularId, e.programaId)
       if (e.pontos >= 0) {
-        if (e.pontos > 0) acrescentar(st, { id: e.id, origem: 'ENTRADA', data: e.data, pontos: e.pontos, custo: e.valor })
-        anotar(st, { tipo: 'ENTRADA', id: e.id, data: e.data, pontos: e.pontos, custo: e.valor })
+        if (e.pontos > 0) {
+          acrescentar(st, { id: e.id, origem: 'ENTRADA', data: e.data, pontos: e.pontos, custo: e.valor }, !FORA_DA_MEDIA.has(e.categoria ?? ''))
+        }
+        const custo = e.pontos > 0 ? st.lotes[st.lotes.length - 1].custo : e.valor
+        anotar(st, { tipo: 'ENTRADA', id: e.id, data: e.data, pontos: e.pontos, custo })
       } else {
         // Ajuste negativo: funciona como uma saída.
         const r = retirar(st, -e.pontos)
@@ -285,7 +379,8 @@ export function calcularCarteira(movs: Movimentos, ate?: Date): Carteira {
       if (t.pontosDestino > 0) {
         acrescentar(destino, { id: t.id, origem: 'TRANSFERENCIA', data: t.data, pontos: t.pontosDestino, custo: r.custo })
       }
-      anotar(destino, { tipo: 'TRANSFERENCIA_RECEBIDA', id: t.id, data: t.data, pontos: t.pontosDestino, custo: r.custo })
+      const custoDestino = t.pontosDestino > 0 ? destino.lotes[destino.lotes.length - 1].custo : r.custo
+      anotar(destino, { tipo: 'TRANSFERENCIA_RECEBIDA', id: t.id, data: t.data, pontos: t.pontosDestino, custo: custoDestino })
     } else {
       const { s } = ev
       const st = estado(s.titularId, s.programaId)
@@ -368,8 +463,9 @@ export function conferirSaldos(
   depois: Movimentos,
   chaves: string[],
 ): { titularId: string; programaId: string; menorSaldo: number; data: Date | null } | null {
-  const ca = calcularCarteira(antes)
-  const cd = calcularCarteira(depois)
+  // Só os saldos importam aqui: o PEPS simples basta (e é mais rápido).
+  const ca = calcularCarteira(antes, undefined, { metodo: 'PEPS' })
+  const cd = calcularCarteira(depois, undefined, { metodo: 'PEPS' })
   for (const chave of chaves) {
     const d = cd.posicoes.get(chave)
     if (!d || d.menorSaldo >= 0) continue

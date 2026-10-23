@@ -20,6 +20,7 @@ export default async function EditarTransferencia({ params }: { params: Promise<
     db.programa.findUnique({ where: { id: t.origemId } }),
   ])
   const faltou = carteira.custoTransferencias.get(t.id)?.semLote ?? 0
+  const provisorio = carteira.custoTransferencias.get(t.id)?.provisorio ?? false
 
   return (
     <>
@@ -27,6 +28,14 @@ export default async function EditarTransferencia({ params }: { params: Promise<
         titulo="Alterar transferência"
         descricao={t.criadoPor ? `Lançada por ${t.criadoPor} em ${t.criadoEm.toLocaleDateString('pt-BR')}` : undefined}
       />
+      {provisorio && (
+        <div className="mb-4 max-w-3xl">
+          <Aviso tom="amarelo">
+            Custo provisório: parte dos pontos que saíram da {origem?.nome} é de um trimestre que ainda não fechou. O custo
+            levado para o destino é a média do trimestre até agora e muda se entrarem mais pontos nele.
+          </Aviso>
+        </div>
+      )}
       {faltou > 0 && (
         <div className="mb-4 max-w-3xl">
           <Aviso tom="vermelho">
