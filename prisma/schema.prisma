@@ -306,3 +306,10 @@ model RegraExtrato {
 
   @@unique([programaId, chave])
 }
+
+/// Configurações gerais do sistema (chave -> valor).
+model Configuracao {
+  chave        String   @id
+  valor        String
+  atualizadoEm DateTime @default(now()) @updatedAt
+}

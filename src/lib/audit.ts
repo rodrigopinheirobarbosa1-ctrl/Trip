@@ -18,7 +18,7 @@ export async function auditar(registro: {
 }): Promise<void> {
   await db.auditoria.create({
     data: {
-      usuarioId: registro.usuario.id,
+      usuarioId: registro.usuario.id || null,
       usuarioNome: registro.usuario.nome,
       acao: registro.acao,
       entidade: registro.entidade,
