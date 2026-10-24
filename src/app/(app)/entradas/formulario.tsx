@@ -40,6 +40,7 @@ export function FormularioEntrada({
   const [categoria, setCategoria] = useState(valores.categoria)
   const [programaId, setProgramaId] = useState(valores.programaId)
   const parceiro = categoria === 'PARCEIRO'
+  const saldoInicial = categoria === 'SALDO_INICIAL'
   const padrao = programas.find((x) => x.id === programaId)?.custoParceiroMilheiro ?? null
   const [pontos, setPontos] = useState(valores.pontos)
   const [valor, setValor] = useState(valores.valor)
@@ -51,7 +52,7 @@ export function FormularioEntrada({
   const v = lerCentavos(valor)
   const cmp = p && p > 0 && v !== null ? (v / p) * 1000 : null
   const n = Number(parcelas) || 1
-  const semDinheiro = !v || parceiro
+  const semDinheiro = !v || parceiro || saldoInicial
   const custoPadrao = parceiro && !v && padrao && p && p > 0 ? Math.round((p * padrao) / 1000) : null
 
   return (
@@ -104,7 +105,7 @@ export function FormularioEntrada({
           />
         </Campo>
         <Campo
-          rotulo={parceiro ? 'Custo atribuído (R$)' : 'Valor pago (R$)'}
+          rotulo={parceiro ? 'Custo atribuído (R$)' : saldoInicial ? 'Custo dos pontos (R$)' : 'Valor pago (R$)'}
           dica={
             parceiro
               ? cmp !== null
@@ -112,9 +113,11 @@ export function FormularioEntrada({
                 : padrao
                   ? `Vazio: usa o padrão do programa (${formatarReais(padrao)} o milheiro)${custoPadrao !== null ? ` = ${formatarReais(custoPadrao)}` : ''}. Não sai do caixa.`
                   : 'Este programa não tem custo padrão para parceiros (cadastre em Programas) — ou informe o valor aqui.'
-              : cmp !== null
-                ? `Custo do milheiro: ${formatarReais(cmp)}`
-                : 'Deixe vazio se não pagou nada.'
+              : saldoInicial
+                ? `${cmp !== null ? `Custo do milheiro: ${formatarReais(cmp)}. ` : ''}Custo dos pontos que já estavam na conta: não sai do caixa.`
+                : cmp !== null
+                  ? `Custo do milheiro: ${formatarReais(cmp)}`
+                  : 'Deixe vazio se não pagou nada.'
           }
         >
           <input
