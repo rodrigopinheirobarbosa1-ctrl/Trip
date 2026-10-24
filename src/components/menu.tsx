@@ -42,6 +42,7 @@ const GRUPOS: Grupo[] = [
       { href: '/usuarios', texto: 'Usuários', soAdmin: true },
       { href: '/importar', texto: 'Importar planilha', soAdmin: true },
       { href: '/auditoria', texto: 'Histórico', soAdmin: true },
+      { href: '/ligacao-claude', texto: 'Ligação com o Claude', soAdmin: true },
       { href: '/minha-senha', texto: 'Minha senha' },
     ],
   },
