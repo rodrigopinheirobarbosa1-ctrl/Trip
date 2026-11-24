@@ -16,7 +16,8 @@ import { db } from './db'
 import { carregarCarteira, carregarNomes } from './dados'
 import { listarPendencias } from './pendencias'
 import { chavePosicao, rotuloTrimestre, type CustoMovimento } from './carteira'
-import { centavosParaCampo } from './formatos'
+import { centavosParaCampo, formatarReais } from './formatos'
+import { auditar } from './audit'
 import { ErroFormulario } from './form-dados'
 import { CATEGORIAS_ENTRADA, FORMAS_PAGAMENTO, TIPOS_SAIDA } from './rotulos'
 import { gravarEntrada, gravarSaida, gravarTransferencia, removerEntrada, removerSaida, removerTransferencia } from './lancamentos'
@@ -294,7 +295,9 @@ export const FERRAMENTAS: Ferramenta[] = [
       const [nomes, cartoes] = await Promise.all([carregarNomes(), db.cartao.findMany({ orderBy: { nome: 'asc' } })])
       return {
         pessoas: nomes.titulares.map((t) => ({ id: t.id, nome: t.nome })),
-        programas: nomes.programas.map((p) => ({ id: p.id, nome: p.nome, custoParceiroMilheiro: reais(p.custoParceiroMilheiro) })),
+        programas: nomes.programas.map((p) => ({
+          id: p.id, nome: p.nome, precoMercadoMilheiro: reais(p.valorMilheiro), custoParceiroMilheiro: reais(p.custoParceiroMilheiro),
+        })),
         cartoes: cartoes.map((c) => ({ id: c.id, nome: c.nome, final: c.final, ativo: c.ativo })),
         categoriasEntrada: CATEGORIAS_ENTRADA,
         formasPagamento: FORMAS_PAGAMENTO,
@@ -305,7 +308,9 @@ export const FERRAMENTAS: Ferramenta[] = [
   },
   {
     name: 'ver_saldos',
-    description: 'Saldo de pontos, custo total e CMP (custo por milheiro, em reais) de cada pessoa em cada programa.',
+    description:
+      'Saldo de pontos, custo total e CMP (custo por milheiro, em reais) de cada pessoa em cada programa, e o valor de mercado ' +
+      '(saldo × preço de venda do milheiro cadastrado no programa).',
     inputSchema: { type: 'object', properties: { pessoa: PESSOA, programa: PROGRAMA } },
     executar: async (args) => {
       const [nomes, carteira] = await Promise.all([carregarNomes(), carregarCarteira()])
@@ -313,10 +318,15 @@ export const FERRAMENTAS: Ferramenta[] = [
       const programa = args.programa ? achar(nomes.programas, args.programa, 'Programa') : null
       return [...carteira.posicoes.values()]
         .filter((p) => (!pessoa || p.titularId === pessoa.id) && (!programa || p.programaId === programa.id))
-        .map((p) => ({
-          pessoa: nomes.titular.get(p.titularId)?.nome, programa: nomes.programa.get(p.programaId)?.nome, pontos: p.pontos,
-          custo: reais(p.custo), cmpMilheiro: reais(p.cmp), ficouNegativoEm: dia(p.ficouNegativoEm),
-        }))
+        .map((p) => {
+          const preco = nomes.programa.get(p.programaId)?.valorMilheiro ?? null
+          return {
+            pessoa: nomes.titular.get(p.titularId)?.nome, programa: nomes.programa.get(p.programaId)?.nome, pontos: p.pontos,
+            custo: reais(p.custo), cmpMilheiro: reais(p.cmp), precoMercadoMilheiro: reais(preco),
+            valorMercado: preco !== null && p.pontos > 0 ? reais((p.pontos * preco) / 1000) : null,
+            ficouNegativoEm: dia(p.ficouNegativoEm),
+          }
+        })
         .sort((a, b) => `${a.pessoa}${a.programa}`.localeCompare(`${b.pessoa}${b.programa}`))
     },
   },
@@ -439,6 +449,36 @@ export const FERRAMENTAS: Ferramenta[] = [
       },
     },
     executar: salvarTransferencia,
+  },
+  {
+    name: 'definir_preco_mercado',
+    edicao: true,
+    description:
+      'Define o preço de venda (valor de mercado) do milheiro de um programa, em reais. Usado para calcular quanto vale o saldo. ' +
+      'precoMilheiro null apaga o preço.',
+    inputSchema: {
+      type: 'object',
+      properties: { programa: PROGRAMA, precoMilheiro: { type: ['number', 'null'], description: 'Reais por 1.000 pontos, ex.: 16.5' } },
+      required: ['programa', 'precoMilheiro'],
+    },
+    executar: async (args) => {
+      const nomes = await carregarNomes()
+      const p = achar(nomes.programas, args.programa, 'Programa')
+      const v = args.precoMilheiro === null ? null : Number(args.precoMilheiro)
+      if (v !== null && (!Number.isFinite(v) || v < 0 || v > 1000)) throw new ErroFerramenta('Preço do milheiro inválido.')
+      const centavos = v === null ? null : Math.round(v * 100)
+      await db.programa.update({ where: { id: p.id }, data: { valorMilheiro: centavos } })
+      await auditar({
+        usuario: USUARIO_CLAUDE,
+        acao: 'ALTERAR',
+        entidade: 'Programa',
+        entidadeId: p.id,
+        resumo:
+          `Alterou o preço de mercado do milheiro de ${p.nome}: ` +
+          `${p.valorMilheiro !== null ? formatarReais(p.valorMilheiro) : 'sem preço'} → ${centavos !== null ? formatarReais(centavos) : 'sem preço'}`,
+      })
+      return { programa: p.nome, precoMercadoMilheiro: reais(centavos) }
+    },
   },
   {
     name: 'excluir_lancamento',

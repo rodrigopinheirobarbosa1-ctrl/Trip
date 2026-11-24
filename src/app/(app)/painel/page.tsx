@@ -7,7 +7,7 @@ import { lerFiltros } from '@/lib/filtros'
 import { chaveMes, formatarCmp, formatarMes, formatarPontos, formatarReais, hoje } from '@/lib/formatos'
 import { TIPOS_PROGRAMA } from '@/lib/rotulos'
 import { BarraFiltros } from '@/components/filtros'
-import { Aviso, Cabecalho, Cartao, Indicador, LinkBotao, Tabela, Td, Th, Vazio } from '@/components/ui'
+import { Aviso, Cabecalho, Cartao, Dinheiro, Indicador, LinkBotao, Tabela, Td, Th, Vazio } from '@/components/ui'
 
 export default async function Painel({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const usuario = await exigirUsuario()
@@ -206,6 +206,8 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
                 <Th alinhar="direita">Total</Th>
                 <Th alinhar="direita">CMP em carteira</Th>
                 <Th alinhar="direita">Custo</Th>
+                <Th alinhar="direita">Preço de mercado</Th>
+                <Th alinhar="direita">Valor de mercado</Th>
                 <Th alinhar="direita">CMP recente ({dias} dias)</Th>
               </tr>
             </thead>
@@ -240,6 +242,16 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
                     <Td alinhar="direita">{formatarCmp(pontos ? (custo / pontos) * 1000 : null)}</Td>
                     <Td alinhar="direita">{formatarReais(custo)}</Td>
                     <Td alinhar="direita">
+                      {pr.valorMilheiro ? formatarCmp(pr.valorMilheiro) : <span className="text-slate-300">-</span>}
+                    </Td>
+                    <Td alinhar="direita" className="font-semibold">
+                      {pr.valorMilheiro && pontos > 0 ? (
+                        <Dinheiro centavos={(pontos * pr.valorMilheiro) / 1000} />
+                      ) : (
+                        <span className="text-slate-300">-</span>
+                      )}
+                    </Td>
+                    <Td alinhar="direita">
                       {rec.pontos > 0 ? (
                         <>
                           {formatarCmp(rec.cmp)}
@@ -253,9 +265,38 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
                 )
               })}
             </tbody>
+            <tfoot>
+              <tr className="font-semibold">
+                <Td>Total</Td>
+                {titularesNaTabela.map((t) => {
+                  const ps = positivas.filter((p) => p.titularId === t.id)
+                  const valor = ps.reduce((s, p) => {
+                    const v = nomes.programa.get(p.programaId)?.valorMilheiro
+                    return v ? s + (p.pontos * v) / 1000 : s
+                  }, 0)
+                  return (
+                    <Td key={t.id} alinhar="direita">
+                      {temPrecoMercado ? <Dinheiro centavos={valor} /> : '-'}
+                      {temPrecoMercado && <span className="block text-xs font-normal text-slate-400">valor de mercado</span>}
+                    </Td>
+                  )
+                })}
+                <Td alinhar="direita">{formatarPontos(totalPontos)}</Td>
+                <Td />
+                <Td alinhar="direita">{formatarReais(totalCusto)}</Td>
+                <Td />
+                <Td alinhar="direita">{temPrecoMercado ? <Dinheiro centavos={valorEstimado} /> : '-'}</Td>
+                <Td />
+              </tr>
+            </tfoot>
           </Tabela>
         )}
         <p className="mt-3 text-xs text-slate-400">
+          <strong>Valor de mercado</strong> = saldo × preço de venda do milheiro cadastrado em{' '}
+          <Link href="/programas" className="underline">
+            Programas
+          </Link>{' '}
+          (programas sem preço ficam de fora).{' '}
           Clique num saldo para ver o extrato. Passe o mouse para ver o CMP de cada pessoa. <strong>CMP em carteira</strong> é o
           custo dos pontos guardados (por lotes). <strong>CMP recente</strong> é quanto custou cada milheiro que entrou nos últimos{' '}
           {dias} dias — compras, bônus e transferências recebidas —, útil para decidir o preço de venda.{' '}
