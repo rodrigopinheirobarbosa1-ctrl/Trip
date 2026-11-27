@@ -18,6 +18,7 @@ const GRUPOS: Grupo[] = [
       { href: '/importar-extrato', texto: 'Importar extrato' },
       { href: '/lotes', texto: 'Lotes' },
       { href: '/extrato', texto: 'Extrato' },
+      { href: '/conferencias', texto: 'Conferência de saldos' },
     ],
   },
   {
