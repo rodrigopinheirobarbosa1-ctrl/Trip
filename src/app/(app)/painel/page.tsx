@@ -6,6 +6,8 @@ import { calcularFluxo, mesesDoAno } from '@/lib/fluxo'
 import { lerFiltros } from '@/lib/filtros'
 import { chaveMes, formatarCmp, formatarMes, formatarPontos, formatarReais, hoje } from '@/lib/formatos'
 import { TIPOS_PROGRAMA } from '@/lib/rotulos'
+import { chavePosicao } from '@/lib/carteira'
+import { carregarConferencias } from '@/lib/conferencias'
 import { BarraFiltros } from '@/components/filtros'
 import { Aviso, Cabecalho, Cartao, Dinheiro, Indicador, LinkBotao, Tabela, Td, Th, Vazio } from '@/components/ui'
 
@@ -20,10 +22,12 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
   const diasPedidos = Number(typeof busca.dias === 'string' ? busca.dias : 90)
   const dias = (PERIODOS_CMP_RECENTE as readonly number[]).includes(diasPedidos) ? diasPedidos : 90
 
-  const [nomes, { carteira, recente }, caixa] = await Promise.all([
+  const incluirNaoConferidas = busca.naoConferidas === 'incluir'
+  const [nomes, { carteira, recente }, caixa, conferencias] = await Promise.all([
     carregarNomes(),
     carregarCarteiraComRecente(dias),
     carregarItensCaixa(titularFiltro ?? undefined),
+    carregarConferencias(),
   ])
   const recenteFiltrado = [...recente.entries()].filter(([chave]) => !titularFiltro || chave.startsWith(`${titularFiltro}|`))
   const recentePorPrograma = (programaId: string) => {
@@ -63,9 +67,22 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
   }
 
   // ---- Pontos -------------------------------------------------------------
-  const posicoes = [...carteira.posicoes.values()].filter((p) => !titularFiltro || p.titularId === titularFiltro)
+  const todasPosicoes = [...carteira.posicoes.values()].filter((p) => !titularFiltro || p.titularId === titularFiltro)
+  // Contas com saldo que nunca foram conferidas com o app ficam fora do estoque
+  // (contam como zero), para não inflar o estoque com saldos duvidosos.
+  const naoConferida = (p: { titularId: string; programaId: string; pontos: number }) =>
+    p.pontos > 0 && !conferencias.has(chavePosicao(p.titularId, p.programaId))
+  const foraDoEstoque = incluirNaoConferidas ? [] : todasPosicoes.filter(naoConferida)
+  const posicoes = todasPosicoes.filter((p) => !foraDoEstoque.includes(p))
   const positivas = posicoes.filter((p) => p.pontos > 0)
   const negativas = posicoes.filter((p) => p.pontos < 0)
+  const linkNaoConferidas = (() => {
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(busca)) if (typeof v === 'string' && k !== 'naoConferidas') q.set(k, v)
+    if (!incluirNaoConferidas) q.set('naoConferidas', 'incluir')
+    const t = q.toString()
+    return t ? `/painel?${t}` : '/painel'
+  })()
   const totalPontos = positivas.reduce((s, p) => s + p.pontos, 0)
   const totalCusto = positivas.reduce((s, p) => s + p.custo, 0)
   const valorEstimado = positivas.reduce((s, p) => {
@@ -83,9 +100,9 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
 
   // Matriz programa x pessoa (como a aba Resumo da planilha).
   const titularesNaTabela = nomes.titulares.filter(
-    (t) => (!titularFiltro || t.id === titularFiltro) && posicoes.some((p) => p.titularId === t.id && p.pontos !== 0),
+    (t) => (!titularFiltro || t.id === titularFiltro) && todasPosicoes.some((p) => p.titularId === t.id && p.pontos !== 0),
   )
-  const programasNaTabela = nomes.programas.filter((pr) => posicoes.some((p) => p.programaId === pr.id && p.pontos !== 0))
+  const programasNaTabela = nomes.programas.filter((pr) => todasPosicoes.some((p) => p.programaId === pr.id && p.pontos !== 0))
 
   // ---- Dinheiro -----------------------------------------------------------
   const inicioAno = new Date(Date.UTC(ano, 0, 1))
@@ -130,6 +147,35 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
             {negativas.length} saldo(s) estão negativos e ficaram fora dos totais.{' '}
             <Link href="/pendencias" className="font-semibold underline">
               Ver pendências
+            </Link>
+          </Aviso>
+        </div>
+      )}
+
+      {foraDoEstoque.length > 0 && (
+        <div className="mb-4">
+          <Aviso tom="amarelo">
+            {foraDoEstoque.length} conta(s) com saldo ainda não conferido estão contando como zero no estoque:{' '}
+            {foraDoEstoque
+              .map((p) => `${nomes.titular.get(p.titularId)?.nome} · ${nomes.programa.get(p.programaId)?.nome} (${formatarPontos(p.pontos)})`)
+              .join(', ')}
+            .{' '}
+            <Link href="/conferencias" className="font-semibold underline">
+              Conferir saldos
+            </Link>
+            {' · '}
+            <Link href={linkNaoConferidas} className="underline">
+              Incluir mesmo assim
+            </Link>
+          </Aviso>
+        </div>
+      )}
+      {incluirNaoConferidas && todasPosicoes.some(naoConferida) && (
+        <div className="mb-4">
+          <Aviso tom="vermelho">
+            Os totais estão incluindo contas que nunca foram conferidas.{' '}
+            <Link href={linkNaoConferidas} className="font-semibold underline">
+              Voltar a contar como zero
             </Link>
           </Aviso>
         </div>
@@ -222,6 +268,19 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
                   <tr key={pr.id} className="hover:bg-slate-50">
                     <Td className="font-medium">{pr.nome}</Td>
                     {titularesNaTabela.map((t) => {
+                      const fora = foraDoEstoque.find((x) => x.titularId === t.id && x.programaId === pr.id)
+                      if (fora)
+                        return (
+                          <Td key={t.id} alinhar="direita">
+                            <Link
+                              href={`/extrato?titular=${t.id}&programa=${pr.id}`}
+                              className="text-slate-400 line-through hover:underline"
+                              title="Saldo ainda não conferido: conta como zero no estoque"
+                            >
+                              {formatarPontos(fora.pontos)}
+                            </Link>
+                          </Td>
+                        )
                       const p = linha.find((x) => x.titularId === t.id)
                       if (!p || p.pontos === 0) return <Td key={t.id} alinhar="direita" className="text-slate-300">-</Td>
                       return (
@@ -296,7 +355,8 @@ export default async function Painel({ searchParams }: { searchParams: Promise<R
           <Link href="/programas" className="underline">
             Programas
           </Link>{' '}
-          (programas sem preço ficam de fora).{' '}
+          (programas sem preço ficam de fora). Saldos <span className="line-through">riscados</span> ainda não foram conferidos
+          com o app e contam como zero.{' '}
           Clique num saldo para ver o extrato. Passe o mouse para ver o CMP de cada pessoa. <strong>CMP em carteira</strong> é o
           custo dos pontos guardados (por lotes). <strong>CMP recente</strong> é quanto custou cada milheiro que entrou nos últimos{' '}
           {dias} dias — compras, bônus e transferências recebidas —, útil para decidir o preço de venda.{' '}
