@@ -320,7 +320,8 @@ export const FERRAMENTAS: Ferramenta[] = [
     name: 'ver_saldos',
     description:
       'Saldo de pontos, custo total e CMP (custo por milheiro, em reais) de cada pessoa em cada programa, o valor de mercado ' +
-      '(saldo × preço de venda do milheiro cadastrado no programa) e a última conferência com o app do programa: ' +
+      '(pontosNoEstoque × preço de venda do milheiro cadastrado no programa) e a última conferência com o app do programa: ' +
+      'pontosNoEstoque é zero enquanto a conta nunca foi conferida (NUNCA_CONFERIDA), para não inflar o estoque; ' +
       'conferidoEm (AAAA-MM-DD), saldoConferido, lancamentosDepoisDaConferencia e situacaoConferencia ' +
       '(EM_DIA = saldo bate e nada foi lançado depois; MUDOU_DEPOIS = há lançamentos posteriores; ' +
       'DIFERENTE = saldo do Trip não bate com o conferido; NUNCA_CONFERIDA).',
@@ -333,10 +334,13 @@ export const FERRAMENTAS: Ferramenta[] = [
         .filter((p) => (!pessoa || p.titularId === pessoa.id) && (!programa || p.programaId === programa.id))
         .map((p) => {
           const preco = nomes.programa.get(p.programaId)?.valorMilheiro ?? null
+          const conferida = conferencias.has(chavePosicao(p.titularId, p.programaId))
+          const noEstoque = conferida ? Math.max(p.pontos, 0) : 0
           return {
             pessoa: nomes.titular.get(p.titularId)?.nome, programa: nomes.programa.get(p.programaId)?.nome, pontos: p.pontos,
             custo: reais(p.custo), cmpMilheiro: reais(p.cmp), precoMercadoMilheiro: reais(preco),
-            valorMercado: preco !== null && p.pontos > 0 ? reais((p.pontos * preco) / 1000) : null,
+            pontosNoEstoque: noEstoque,
+            valorMercado: preco !== null && noEstoque > 0 ? reais((noEstoque * preco) / 1000) : null,
             ficouNegativoEm: dia(p.ficouNegativoEm),
             ...dadosConferencia(conferencias.get(chavePosicao(p.titularId, p.programaId)), p.pontos),
           }
